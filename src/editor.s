@@ -1,4 +1,4 @@
-; Lemmings In-Game Level Editor V1.1
+; Lemmings In-Game Level Editor V1.2
 ; Copyright (c) 2026 Timo Heimonen <timo.heimonen@proton.me>
 ; Licensed under the MIT License. See the LICENSE file for details.
 ;
@@ -972,7 +972,7 @@ labels:
         dc.b 'Level               Brush               Minutes             Left/Right: Piece   '
         dc.b 'Ground              Special             Flip                F: Flip   E: Resume '
         dc.b 'Room                                                        S: Save   L: Load   '
-        dc.b '                                                    Editor V1.1 by Timo Heimonen'
+        dc.b '                                                    Editor V1.2 by Timo Heimonen'
         even
 
 ; Original 5x7 ASCII bitmap font, authored for the editor.
@@ -1083,7 +1083,9 @@ font_source:
 ; directly behind the first part, so the image in memory is contiguous.
         even
 editor2_start:
+        ifnd WHDLOAD
         include "disk_codec.s"
+        endif
         include "disk_io.s"
         include "disk_index.s"
 

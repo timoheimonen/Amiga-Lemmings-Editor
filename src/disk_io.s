@@ -1,4 +1,4 @@
-; Lemmings In-Game Level Editor V1.1
+; Lemmings In-Game Level Editor V1.2
 ; Copyright (c) 2026 Timo Heimonen <timo.heimonen@proton.me>
 ; Licensed under the MIT License. See the LICENSE file for details.
 ;
@@ -6,6 +6,7 @@
 ; Interrupts remain enabled. The non-displayed viewport is borrowed until the
 ; call returns; no drawing or buffer swap may run inside a transport call.
 ; All public calls preserve every register except D0/CCR. A5 is game globals.
+; With WHDLOAD defined, the hardware routines are replaced by disk_file.s.
 DISK_REFUSED    equ -1
 DISK_CANCELLED  equ -2
 DISK_NO_MEDIA   equ -3
@@ -184,6 +185,7 @@ disk_replace_slot:
 .done:  movem.l (sp)+,d1-d7/a0-a6
         rts
 
+        ifnd WHDLOAD
 ; Internal whole-track commit. A0: desired image of the already-read track
 ; at disk_track_no. The caller establishes identity, validation and permission.
 ; Retain drive/buffer ownership and defer cancellation through verification.
@@ -237,6 +239,7 @@ disk_write_decoded:
         moveq #DISK_DAMAGED,d0
 .done:  movem.l (sp)+,d1-d7/a0-a3
         rts
+        endif
 
 ; Accept an empty slot or a fully valid record for the active level. A0 and
 ; every register except D0/CCR are preserved by validate_record as well.
@@ -263,6 +266,9 @@ disk_compare:
         movem.l (sp)+,d1/a0-a1
         rts
 
+        ifd WHDLOAD
+        include "disk_file.s"
+        else
 ; Validate ownership before touching hardware. The two known viewport bases
 ; must form a back/front pair. Wait a full PAL field for the copper pointer
 ; update to take effect, and drain any outstanding blit before borrowing.
@@ -506,3 +512,4 @@ disk_release:
         st disk_redraw(a4)
         move.l (sp)+,d0
         rts
+        endif

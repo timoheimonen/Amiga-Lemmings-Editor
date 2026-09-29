@@ -1,4 +1,4 @@
-; Lemmings In-Game Level Editor V1.1
+; Lemmings In-Game Level Editor V1.2
 ; Copyright (c) 2026 Timo Heimonen <timo.heimonen@proton.me>
 ; Licensed under the MIT License. See the LICENSE file for details.
 ;
@@ -61,9 +61,13 @@ menu_open:
         clr.b key_head(a4)
         clr.b key_tail(a4)
         clr.b shift(a4)
+        ifd WHDLOAD
+        st native_drive(a4)             ; no floppy drives
+        else
         move.b 2(a5),d0                 ; CIA bit of the game's disk 2 drive
         subq.b #3,d0
         move.b d0,native_drive(a4)
+        endif
         btst #6,$bfe001
         seq last_left(a4)
         btst #2,$16(a6)
@@ -118,8 +122,13 @@ menu_leave:
 ; Finding the save disk
 
 ; Try the drive used last time, then every other connected drive except the
-; one holding disk 2. Otherwise ask for the save disk.
+; one holding disk 2. Otherwise ask for the save disk. Under WHDLoad the save
+; disk is a file; if it is missing, offer to create it.
 menu_find_disk:
+        ifd WHDLOAD
+        clr.b menu_prompt(a4)
+        bra menu_prompt_done
+        else
         moveq #0,d0
         move.b save_drive(a4),d0
         beq.s .others
@@ -162,6 +171,7 @@ menu_find_disk:
 .prompt:
         bsr menu_prompt_save
 .done:  rts
+        endif
 
 ; D0: drive. Read the save disk index and the current level's saves.
 ; Return 0 when the list is ready (or the index needs rebuilding and the menu
@@ -643,6 +653,9 @@ menu_message_key:
         rts
 
 menu_prompt_save:
+        ifd WHDLOAD
+        bra menu_leave                  ; nothing to insert; close the menu
+        endif
         lea txt_insert_save(pc),a0
         move.l a0,menu_msg(a4)
         move.b #M_PROMPT_SAVE,menu_mode(a4)
@@ -867,6 +880,7 @@ choose_slot:
 .done:  movem.l (sp)+,d1-d3/a0
         rts
 
+        ifnd WHDLOAD
 ; D0: drive. Write an empty save disk: every data track, then track zero with
 ; the header and an empty index, so an interrupted run never leaves a valid
 ; header in front of unformatted tracks. Each track is verified after writing.
@@ -924,6 +938,7 @@ disk_initialize:
 .done:  movem.l (sp)+,d1-d7/a0-a6
         rts
 
+
 ; D0: drive 0..3. Return D0 = 0 (Z set) when a drive is connected. DF0 is
 ; always present; DF1..DF3 report a 32-bit drive identification serially on
 ; /DSKRDY after the motor has been switched off.
@@ -957,6 +972,7 @@ drive_present:
 .no:    moveq #-1,d0
 .done:  movem.l (sp)+,d1-d3
         rts
+        endif
 
 ; Called by the disk routines before each track. D0: track. Shows the track
 ; number while the menu is open; the routines run inside a single frame.
@@ -1112,11 +1128,18 @@ menu_draw_list:
         bsr menu_draw_frame
         ; Drive and free slots.
         lea menu_line(a4),a1
+        ifd WHDLOAD
+        lea txt_save_file(pc),a0
+.file:  move.b (a0)+,(a1)+
+        bne.s .file
+        subq.l #1,a1
+        else
         move.b #'D',(a1)+
         move.b #'F',(a1)+
         moveq #'0',d0
         add.b menu_drive(a4),d0
         move.b d0,(a1)+
+        endif
         lea txt_free(pc),a0
 .free:  move.b (a0)+,(a1)+
         bne.s .free
@@ -1389,9 +1412,16 @@ txt_insert_disk2:       dc.b 'Insert LEMMINGS DISK 2 into',$0a
                         dc.b 'the drive below and press Return.',0
 txt_game_disk:          dc.b 'This is a Lemmings game disk,',$0a
                         dc.b 'not a save disk.',0
+        ifd WHDLOAD
+txt_save_file:          dc.b 'Save disk file',0
+txt_init:               dc.b 'There is no save disk file.',$0a,$0a
+                        dc.b 'Create an empty one as',$0a
+                        dc.b 'Lemmings_SaveDisk.adf?',0
+        else
 txt_init:               dc.b 'This is not a save disk.',$0a,$0a
                         dc.b 'Initialize it as a save disk?',$0a
                         dc.b 'ALL DATA ON IT WILL BE LOST.',0
+        endif
 txt_index_bad:          dc.b 'The save index is damaged.',$0a,$0a
                         dc.b 'Rebuild it from the saves?',$0a
                         dc.b 'This reads the whole disk.',0
