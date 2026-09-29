@@ -1,7 +1,8 @@
 # Lemmings In-Game Level Editor
 
 A patch that adds an in-game terrain editor to Amiga Lemmings (1991), with
-named saves per level on a separate save disk.
+named saves per level on a separate save disk. For floppy (A500) and as a
+WHDLoad install for hard disk.
 
 ![Editor open in level 1, with a flipped piece on the cursor](docs/images/editor_v1.1.png)
 
@@ -30,6 +31,16 @@ python3 patch.py "Disk 1.adf" "Disk 2.adf" -o out
 
 Inputs are matched by hash, in any order, and never modified. Output:
 `Lemmings_Disk1-editor-patch.adf` and `Lemmings_Disk2-editor-patch.adf`.
+
+## WHDLoad
+
+```sh
+python3 patch.py "Disk 1.adf" "Disk 2.adf" --whdload out/Lemmings
+```
+
+Writes a WHDLoad install (slave, disk images, Workbench icon) for Kickstart
+2.0 or later. Saves go to a save disk image file next to it. See
+[whdload/README.md](whdload/README.md).
 
 ## Save disk
 
@@ -94,9 +105,12 @@ python3 build.py
 ```
 
 Assembles `src/editor.s` (which includes the other sources) and
-`src/bootstrap.s`, splits the editor image at `editor2_start`, packs both parts
-in the game's own format, checks the memory layout, and embeds the results in
-the generated section of `patch.py`, so end users need only Python.
+`src/bootstrap.s`, twice: for floppy and with `WHDLOAD` defined for the
+WHDLoad install. Splits each editor image at `editor2_start`, packs both parts
+in the game's own format and checks the memory layout. Also assembles the
+WHDLoad slave and builds the install's icon (`whdload/build.py`), and embeds
+everything in the generated section of `patch.py`, so end users need only
+Python.
 
 ## How it works
 
@@ -115,12 +129,15 @@ the generated section of `patch.py`, so end users need only Python.
 - `patch.py` adds the bootstrap and three jump hooks to the program file and
   `Editor2` to disk 1, and `Editor` to disk 2, using the game's own disk
   directory.
+- `whdload/` holds the WHDLoad slave and the file-based save disk transport
+  that replaces the floppy disk code in the WHDLoad build.
 
 ## Docs
 
 Addresses, hooks and data formats are documented in [docs/](docs/):
 [patch points](docs/patch-points.md), [memory map](docs/memory-map.md),
 [game internals](docs/game-internals.md) and [save disk](docs/save-disk.md).
+The WHDLoad version is documented in [whdload/docs/](whdload/docs/).
 
 ## Author
 

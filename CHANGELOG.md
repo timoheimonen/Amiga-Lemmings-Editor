@@ -1,5 +1,15 @@
 # Changelog
 
+## V1.2
+
+- WHDLoad install: `patch.py --whdload DIR` writes a slave, the patched disk
+  images and a Workbench icon. Runs from hard disk on Kickstart 2.0 or later
+  (tested on an A1200 with Kickstart and Workbench 3.1); F10 quits.
+- Under WHDLoad, saves go to the save disk image file `Lemmings_SaveDisk.adf`
+  in the install directory, in the same format as a floppy save disk.
+- The floppy version is unchanged apart from the version number; V1.1 save
+  disks and saves work in both versions.
+
 ## V1.1
 
 - Save and load: up to 32 named saves per level on a separate save disk,
