@@ -5,7 +5,7 @@ named saves per level on a separate save disk.
 
 ![Editor open in level 1, with a flipped piece on the cursor](docs/images/editor_v1.1.png)
 
-Watch it in action: [YouTube](https://youtu.be/q9s-7uenz_o)
+Watch it in action: [YouTube](https://youtu.be/N6VEIr_eumY)
 
 ## Requirements
 
