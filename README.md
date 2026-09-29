@@ -27,8 +27,7 @@ python3 patch.py "Disk 1.adf" "Disk 2.adf" -o out
 ```
 
 Inputs are matched by hash, in any order, and never modified. Output:
-`Lemmings_Disk1-editor-patch.adf` (DF0:) and `Lemmings_Disk2-editor-patch.adf`
-(DF1:).
+`Lemmings_Disk1-editor-patch.adf` and `Lemmings_Disk2-editor-patch.adf`.
 
 ## Controls
 
