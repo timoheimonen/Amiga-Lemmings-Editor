@@ -1,9 +1,15 @@
 # WHDLoad patch points
 
 What the slave changes in the game's main program `Code` after loading it to
-`$400`. Addresses are runtime addresses. The first long word of every site is
-checked before it is changed; any other version ends with WHDLoad's "wrong
-version" requester. The editor's own patch points are the same as on floppy
+`$400`. Addresses are runtime addresses.
+
+The slave accepts only the disk images of its own build: in the disk 1
+directory, `Code` (the game program with the editor's bootstrap) and `Editor2`
+(the WHDLoad editor's disk code) must have exactly the lengths of that build,
+and the first long word of every patch site is checked before it is changed.
+Anything else, including the floppy version's disk images, ends with
+WHDLoad's "wrong version" requester. The slave and its `Disk.1` and `Disk.2`
+therefore always come from the same `patch.py --whdload` run. The editor's own patch points are the same as on floppy
 (see the main documentation).
 
 ## Start-up

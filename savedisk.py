@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Lemmings In-Game Level Editor V1.2
+# Lemmings In-Game Level Editor V1.2.1
 # Copyright (c) 2026 Timo Heimonen <timo.heimonen@proton.me>
 # Licensed under the MIT License. See the LICENSE file for details.
 """Create and exchange editor save disks without distributing game data."""

@@ -1,4 +1,4 @@
-; Lemmings In-Game Level Editor V1.2
+; Lemmings In-Game Level Editor V1.2.1
 ; Copyright (c) 2026 Timo Heimonen <timo.heimonen@proton.me>
 ; Licensed under the MIT License. See the LICENSE file for details.
 ;
@@ -28,6 +28,9 @@ MAILBOX_SIZE    equ 16
         ifnd CODE_SIZE
         fail "CODE_SIZE (length of the patched Code file) must be defined"
         endif
+        ifnd EDITOR2_SIZE
+        fail "EDITOR2_SIZE (length of the WHDLoad build's Editor2 file) must be defined"
+        endif
 
 ;============================================================================
 
@@ -53,7 +56,7 @@ expmem:
 
 name:   dc.b "Lemmings",0
 copy:   dc.b "1991 DMA Design / Psygnosis",0
-info:   dc.b "In-Game Level Editor V1.2",10
+info:   dc.b "In-Game Level Editor V1.2.1",10
         dc.b "by Timo Heimonen",0
         even
 
@@ -68,7 +71,10 @@ start:
         move.l a0,(a1)
         movea.l a0,a2
 
-        ; Read the disk 1 directory and find "Code".
+        ; Read the disk 1 directory. The install must be the disk images
+        ; patched with this version's WHDLoad editor: "Code" with its
+        ; bootstrap and "Editor2" must have exactly the lengths of that build.
+        ; Floppy editor builds and other versions differ at least in Editor2.
         move.l #$400,d0
         move.l #$1000,d1
         moveq #1,d2
@@ -76,19 +82,33 @@ start:
         jsr resload_DiskLoad(a2)
         lea (DIRECTORY+$10).l,a1
         move.l #$1600,d3                ; first file's disk offset
+        moveq #0,d4                     ; offset of Code
+        moveq #0,d5                     ; length of Code
+        moveq #0,d6                     ; length of Editor2
 .find:  cmpi.l #-1,(a1)
-        beq wrong_version
+        beq.s .end
         cmpi.l #'Code',(a1)
-        bne.s .next
+        bne.s .editor2
         tst.b 4(a1)
-        beq.s .found
+        bne.s .next
+        move.l d3,d4
+        move.l 12(a1),d5
+        bra.s .next
+.editor2:
+        cmpi.l #'Edit',(a1)
+        bne.s .next
+        cmpi.l #'or2'<<8,4(a1)
+        bne.s .next
+        move.l 12(a1),d6
 .next:  add.l 12(a1),d3
         lea 16(a1),a1
         bra.s .find
-.found: move.l 12(a1),d1
-        cmp.l #CODE_SIZE,d1
+.end:   cmp.l #CODE_SIZE,d5
         bne wrong_version
-        move.l d3,d0
+        cmp.l #EDITOR2_SIZE,d6
+        bne wrong_version
+        move.l d5,d1
+        move.l d4,d0
         moveq #1,d2
         lea (CODE_BASE).l,a0
         jsr resload_DiskLoad(a2)
