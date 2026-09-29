@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Lemmings In-Game Level Editor V1.2
+# Lemmings In-Game Level Editor V1.2.1
 # Copyright (c) 2026 Timo Heimonen <timo.heimonen@proton.me>
 # Licensed under the MIT License. See the LICENSE file for details.
 """Build the WHDLoad install of Lemmings with the in-game level editor.
@@ -52,15 +52,15 @@ ICON_PICTURE = '''\
 ICON_TOOLTYPES = ['SLAVE=Lemmings.slave', 'PRELOAD', '(NOWRITECACHE)', '(WRITEDELAY=25)']
 
 
-def code_size(disk1: bytes) -> int:
-    """Length of the program file "Code" in the disk 1 directory."""
+def file_size(disk1: bytes, name: bytes) -> int:
+    """Length of a file in the disk 1 directory."""
     for record in range(FIRST_RECORD, DIRECTORY_END, 16):
         raw = disk1[record:record + 16]
         if raw == b'\xff' * 16:
             break
-        if raw[:5] == b'Code\0':
+        if raw[:len(name) + 1] == name + b'\0':
             return int.from_bytes(raw[12:], 'big')
-    raise ValueError('disk 1 has no Code file')
+    raise ValueError(f'disk 1 has no {name.decode()} file')
 
 
 def check(disk: bytes, first_file: bytes, path: Path) -> None:
@@ -71,12 +71,14 @@ def check(disk: bytes, first_file: bytes, path: Path) -> None:
         raise ValueError(f'{path}: not patched with the editor')
 
 
-def slave(vasm: str, size: int) -> bytes:
-    """Assemble the slave for a patched Code file of the given length."""
+def slave(vasm: str, code_size: int, editor2_size: int) -> bytes:
+    """Assemble the slave for the patched Code and Editor2 files of these
+    lengths; it refuses disk images whose files differ."""
     with tempfile.TemporaryDirectory() as work:
         output = Path(work) / 'Lemmings.slave'
         subprocess.run([vasm, '-m68000', '-Fhunkexe', '-nosym', '-quiet',
-                        '-I', str(ROOT / 'src'), f'-DCODE_SIZE={size}',
+                        '-I', str(ROOT / 'src'), f'-DCODE_SIZE={code_size}',
+                        f'-DEDITOR2_SIZE={editor2_size}',
                         '-o', str(output), str(ROOT / 'src' / 'slave.s')], check=True)
         return output.read_bytes()
 
@@ -117,7 +119,8 @@ def icon() -> bytes:
 
 def install(vasm: str, disk1: bytes, disk2: bytes) -> dict[str, bytes]:
     """The files of the install, by name."""
-    return {'Lemmings.slave': slave(vasm, code_size(disk1)), 'Disk.1': disk1,
+    code, editor2 = file_size(disk1, b'Code'), file_size(disk1, b'Editor2')
+    return {'Lemmings.slave': slave(vasm, code, editor2), 'Disk.1': disk1,
             'Disk.2': disk2, 'Lemmings.info': icon()}
 
 

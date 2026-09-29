@@ -1,5 +1,12 @@
 # Changelog
 
+## V1.2.1
+
+- The WHDLoad slave accepts only the disk images written with it by
+  `patch.py --whdload`. Disk images of the floppy version or of another
+  version end with WHDLoad's "wrong version" requester instead of starting a
+  game whose save menu would try to use the floppy drive.
+
 ## V1.2
 
 - WHDLoad install: `patch.py --whdload DIR` writes a slave, the patched disk
