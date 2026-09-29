@@ -1,4 +1,4 @@
-; Lemmings In-Game Level Editor V1.0
+; Lemmings In-Game Level Editor V1.1
 ; Copyright (c) 2026 Timo Heimonen <timo.heimonen@proton.me>
 ; Licensed under the MIT License. See the LICENSE file for details.
 ;
@@ -9,9 +9,22 @@
 ; and level setup. All game addresses refer to the supported game version,
 ; whose disk images patch.py identifies by SHA-256. Inside the hooks A4 points
 ; to the editor's own state and A5 to the game's global variables.
-GFX             equ $4000
-CHIP_TEXT       equ $21c00
-CHIP_COPPER     equ $22b00
+GFX             equ $8000
+GFX_MAX_BYTES   equ 42200
+EDITOR_RESERVE  equ $20000
+; CPU-only disk workspace after the largest Ground resource. These buffers
+; are initialized by their producers, not by the pre-Ground storage clear.
+DISK_WORK       equ $12800
+DISK_TRACK      equ DISK_WORK
+DISK_VERIFY     equ DISK_TRACK+TRACK_BYTES
+DISK_HEADER     equ DISK_VERIFY+TRACK_BYTES
+DISK_ROWS       equ DISK_HEADER+TRACK_BYTES
+DISK_REINDEX    equ DISK_ROWS+32*20
+DISK_WORK_END   equ DISK_REINDEX+INDEX_BYTES
+        xdef GFX_MAX_BYTES,EDITOR_RESERVE,DISK_WORK_END
+CHIP_TEXT       equ $21d00            ; above the bootstrap appended to Code
+CHIP_COPPER     equ $22c00
+        xdef CHIP_TEXT,CHIP_COPPER
 TEXT_BYTES      equ 3840
 active          equ 0
 old_pause       equ 1
@@ -58,7 +71,54 @@ shown_y         equ 90
 shown_piece     equ 92
 shown_sign      equ 94
 shown_flip      equ 95
-STATE_SIZE      equ 96
+original_count  equ 96
+remaining       equ 98
+shown_remaining equ 100
+level_id        equ 102
+base_crc        equ 104
+load_pending    equ 108             ; accepted request, retained across level capture
+load_reopen     equ 109             ; return to the editor after original startup
+load_error      equ 110             ; freshly loaded base rejected the request
+disk_busy       equ 112             ; synchronous ownership of the back buffer
+disk_cancel     equ 113
+disk_committing equ 114             ; finish verification even if Esc is pressed
+disk_raw        equ 116
+disk_old_adk    equ 120
+disk_old_dma    equ 122
+disk_old_int    equ 124
+disk_drive      equ 126             ; CIA-B select bit, 3..6
+disk_cylinder   equ 127
+disk_redraw     equ 128
+disk_track_no   equ 130
+disk_free       equ 132
+disk_rows       equ 134
+menu_mode       equ 136             ; 0 = closed, otherwise the menu's state
+menu_kind       equ 137             ; 0 = save, 1 = load
+menu_sel        equ 138             ; selected row
+menu_rows       equ 140
+menu_new        equ 142             ; the first row is "new save"
+save_drive      equ 143             ; drive of the last save disk + 1, or 0
+menu_drive      equ 144
+native_drive    equ 145             ; drive the game reads disk 2 from
+native_used     equ 146             ; a disk was taken from that drive
+pending_menu    equ 147             ; S or L pressed: 1 = save, 2 = load
+key_head        equ 148
+key_tail        equ 149
+key_queue       equ 150             ; 16 raw key codes
+shift           equ 166
+name_len        equ 167
+name            equ 168             ; 16 characters, NUL padded
+name_end        equ 184             ; always NUL
+menu_action     equ 185
+menu_after      equ 186
+menu_prompt     equ 187             ; drive shown in the save-disk prompt
+menu_msg        equ 188
+palette_save    equ 192             ; five copper colour values
+menu_slot       equ 202
+list_ok         equ 204             ; the list reflects a successful scan
+menu_line       equ 206             ; 42-character text line
+STATE_SIZE      equ 248
+MAX_PLACEMENTS  equ 400
 
         org 0
 ; Install the hooks: keyboard interrupt ($174E), frame start ($654), gameplay
@@ -67,6 +127,10 @@ STATE_SIZE      equ 96
 install:
         movem.l d0-d7/a0-a6,-(sp)
         lea state(pc),a4
+        movea.l a4,a0
+        move.w #(storage_end-state)/2-1,d0
+.clear: clr.w (a0)+
+        dbra d0,.clear
         movea.l $f8(a5),a0
         adda.l #GFX,a0
         move.l a0,gfx_ptr(a4)
@@ -92,6 +156,7 @@ install:
         move.l a0,$68a
         move.w #$4ef9,$688
         move.w #$4e71,$68e
+        bsr install_load_hooks
         lea copper_template(pc),a0
         lea CHIP_COPPER,a1
         move.w #(copper_end-copper_template)/2-1,d0
@@ -109,12 +174,21 @@ capture:
         lea state(pc),a4
         bsr hide_status
         clr.b active(a4)
+        clr.b load_error(a4)
         clr.b valid(a4)
         clr.b negative(a4)
         clr.w flipped(a4)       ; orientation and queued F press
         clr.w pending_toggle(a4)
+        clr.b pending_menu(a4)
         clr.w piece_id(a4)
         clr.l paint_count(a4)
+        move.w $42(a5),level_id(a4)
+        bsr count_placements
+        lea $c5a6,a0
+        move.l #2048,d0
+        moveq #-1,d1
+        bsr crc32
+        move.l d0,base_crc(a4)
         move.b $26(a5),last_key(a4)
         lea ground_name(pc),a0
         move.w $c5c0,d0
@@ -143,7 +217,8 @@ capture:
 .counted:
         move.w d0,piece_count(a4)
         sne valid(a4)
-.done:  movem.l (sp)+,d0-d7/a0-a6
+.done:  bsr check_loaded_base
+        movem.l (sp)+,d0-d7/a0-a6
         jsr $2826
         jmp $276a
 
@@ -152,8 +227,32 @@ capture:
 keyboard:
         move.b d0,$26(a5)
         lea state(pc),a4
+        tst.b disk_busy(a4)
+        beq.s .menu
+        cmp.b #$45,d0                  ; Esc cancels a disk operation
+        bne.s .ack
+        st disk_cancel(a4)
+        bra.s .ack
+.menu:  tst.b menu_mode(a4)
+        beq.s .editor
+        bsr menu_queue_key
+        bra.s .ack
+.editor:
         tst.b d0
         bmi.s .ack
+        cmp.b #$21,d0                  ; S: save menu
+        bne.s .load
+        tst.b active(a4)
+        beq.s .ack
+        move.b #1,pending_menu(a4)
+        bra.s .ack
+.load:  cmp.b #$28,d0                  ; L: load menu
+        bne.s .toggle
+        tst.b active(a4)
+        beq.s .ack
+        move.b #2,pending_menu(a4)
+        bra.s .ack
+.toggle:
         cmp.b #$12,d0
         bne.s .right
         eori.b #1,pending_toggle(a4)
@@ -181,7 +280,30 @@ keyboard:
 frame:
         movem.l d0-d7/a0-a6,-(sp)
         lea state(pc),a4
-        clr.b dirty(a4)
+        tst.b load_pending(a4)
+        bne restart_saved_level
+        tst.b load_reopen(a4)
+        beq.s .input
+        clr.b load_reopen(a4)
+        move.b #1,pending_toggle(a4)
+.input: move.b disk_redraw(a4),dirty(a4)
+        clr.b disk_redraw(a4)
+        tst.b menu_mode(a4)
+        bne.s .menu
+        moveq #0,d0
+        move.b pending_menu(a4),d0
+        beq.s .editor_input
+        clr.b pending_menu(a4)
+        tst.b active(a4)
+        beq.s .editor_input
+        bsr menu_open
+        bra.s .menu_idle
+.menu:  bsr menu_frame
+.menu_idle:
+        movem.l (sp)+,d0-d7/a0-a6
+        clr.w $3e(a5)
+        jmp $646
+.editor_input:
         move.w sr,-(sp)
         ori.w #$0700,sr
         moveq #0,d6
@@ -271,6 +393,9 @@ frame:
         beq .done
         cmpi.w #160,$9dac
         bhs .done
+        tst.w remaining(a4)
+        beq .done
+        bsr record_placement
         move.w brush_x(a4),d0
         move.w brush_y(a4),d1
         moveq #0,d2
@@ -319,6 +444,58 @@ frame:
         jsr $1898
         clr.w $3e(a5)
         jmp $65c
+
+; Count only the terrain records consumed by normal level construction.
+; Special backgrounds bypass the original placement list. The scan is bounded
+; by the level record's terrain region even if no sentinel is present.
+count_placements:
+        moveq #0,d0
+        tst.w $c5c2
+        bne.s .counted
+        lea $c6c6,a0
+.scan:  cmpi.l #-1,(a0)+
+        beq.s .counted
+        addq.w #1,d0
+        cmp.w #MAX_PLACEMENTS,d0
+        blo.s .scan
+.counted:
+        move.w d0,original_count(a4)
+        neg.w d0
+        add.w #MAX_PLACEMENTS,d0
+        move.w d0,remaining(a4)
+        rts
+
+; Append one placement before changing terrain. The list is separate from the
+; game's level record; paint_count bounds its live entries. H holds a 13-bit
+; x origin, erase bit 13 and flip bit 14. L holds signed y in bits 7..15 and
+; the piece ID in bits 0..5. Negative x origins use 13-bit two's complement;
+; replay must sign-extend these, unlike the original unsigned x decoder.
+record_placement:
+        move.w brush_x(a4),d0
+        move.w width(a4),d2
+        lsr.w #1,d2
+        sub.w d2,d0
+        and.w #$1fff,d0
+        tst.b negative(a4)
+        beq.s .flip
+        or.w #$2000,d0
+.flip:  tst.b flipped(a4)
+        beq.s .y
+        or.w #$4000,d0
+.y:     move.w brush_y(a4),d1
+        move.w height(a4),d2
+        lsr.w #1,d2
+        sub.w d2,d1
+        lsl.w #7,d1
+        or.w piece_id(a4),d1
+        move.l paint_count(a4),d2
+        lsl.w #2,d2
+        lea placements(pc),a0
+        adda.w d2,a0
+        move.w d0,(a0)+
+        move.w d1,(a0)
+        subq.w #1,remaining(a4)
+        rts
 
 ; Scroll the level while the cursor touches the left or right screen edge.
 scroll:
@@ -569,8 +746,8 @@ show_status:
         bsr status_full
         movem.l (sp)+,d0-d7/a0-a3
         move.w #$24c1,$84ee
-        move.l #$00840002,$8668
-        move.l #$00862b00,$866c
+        move.l #$00840000+(CHIP_COPPER>>16),$8668
+        move.l #$00860000+(CHIP_COPPER&$ffff),$866c
         move.l #$008a0000,$8670
         rts
 hide_status:
@@ -651,6 +828,7 @@ status_full:
         move.w d0,shown_x(a4)   ; -1 and 1 are never valid field values
         move.w d0,shown_y(a4)
         move.w d0,shown_piece(a4)
+        move.w d0,shown_remaining(a4)
         move.w #$0101,shown_sign(a4)
 status_values:
         move.w brush_x(a4),d0
@@ -688,7 +866,7 @@ status_values:
         bsr glyph
 .flip:  move.b flipped(a4),d0
         cmp.b shown_flip(a4),d0
-        beq.s .done
+        beq.s .remaining
         move.b d0,shown_flip(a4)
         lea CHIP_TEXT+3*640,a3
         move.w #52*8,d4
@@ -704,6 +882,25 @@ status_values:
         bsr glyph
         addq.w #8,d4
         dbra d6,.flip_text
+.remaining:
+        move.w remaining(a4),d0
+        cmp.w shown_remaining(a4),d0
+        beq.s .done
+        move.w d0,shown_remaining(a4)
+        lea CHIP_TEXT+4*640,a3
+        move.w #12*8,d4
+        tst.w d0
+        bne.s .room
+        lea full_text(pc),a2
+        moveq #3,d6
+.full:  moveq #0,d0
+        move.b (a2)+,d0
+        bsr glyph
+        addq.w #8,d4
+        dbra d6,.full
+        bra.s .done
+.room:
+        bsr number
 .done:  rts
 ; Draw D0 as four decimal digits.
 number:
@@ -762,22 +959,21 @@ glyph:
 copper_template:
         dc.w $f401,$ff00,$009c,$8010
         dc.w $0100,$9200,$0102,0,$0108,0,$010a,0
-        dc.w $00e0,2,$00e2,$1c00,$0182,$0fff
+        dc.w $00e0,CHIP_TEXT>>16,$00e2,CHIP_TEXT&$ffff,$0182,$0fff
         dc.w $ffff,$fffe
 copper_end:
 ground_name: dc.b 'Ground1',0
 flip_off: dc.b 'Off'
 flip_on: dc.b 'On '
+full_text: dc.b 'Full'
 labels:
         dc.b 'X Coord             Piece               Lemmings            LMB: Place          '
         dc.b 'Y Coord             Piece Types         To Save             RMB: Add/Erase      '
         dc.b 'Level               Brush               Minutes             Left/Right: Piece   '
         dc.b 'Ground              Special             Flip                F: Flip   E: Resume '
-        dc.b '                                                                                '
-        dc.b '                                                    Editor V1.0 by Timo Heimonen'
+        dc.b 'Room                                                        S: Save   L: Load   '
+        dc.b '                                                    Editor V1.1 by Timo Heimonen'
         even
-state:  dcb.b STATE_SIZE,0
-font:   dcb.b 760,0
 
 ; Original 5x7 ASCII bitmap font, authored for the editor.
 ; Seven rows per glyph; the low five bits run left to right.
@@ -878,3 +1074,25 @@ font_source:
         dc.b $18,$04,$04,$02,$04,$04,$18 ; $7d }
         dc.b $00,$00,$09,$16,$00,$00,$00 ; $7e ~
         even
+
+        include "save_load.s"
+        include "menu.s"
+
+; The code from here to image_end is stored separately, as the Editor2 file on
+; disk 1. The bootstrap loads it before the game asks for disk 2 and unpacks it
+; directly behind the first part, so the image in memory is contiguous.
+        even
+editor2_start:
+        include "disk_codec.s"
+        include "disk_io.s"
+        include "disk_index.s"
+
+; Runtime storage follows the file image in the reserved editor block.
+; The installer clears it before publishing any hooks.
+image_end:
+state           equ image_end
+placements      equ state+STATE_SIZE
+font            equ placements+MAX_PLACEMENTS*4
+load_record     equ font+760
+save_record     equ load_record+2048
+storage_end     equ save_record+2048

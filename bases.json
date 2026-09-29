@@ -1,0 +1,605 @@
+{
+  "compatibility": 65537,
+  "levels": [
+    {
+      "crc32": "429f0911",
+      "original_count": 191,
+      "piece_count": 50
+    },
+    {
+      "crc32": "e2e146d3",
+      "original_count": 52,
+      "piece_count": 62
+    },
+    {
+      "crc32": "ed816853",
+      "original_count": 94,
+      "piece_count": 62
+    },
+    {
+      "crc32": "cd578d5d",
+      "original_count": 70,
+      "piece_count": 60
+    },
+    {
+      "crc32": "e13d6123",
+      "original_count": 129,
+      "piece_count": 37
+    },
+    {
+      "crc32": "bc3fee31",
+      "original_count": 104,
+      "piece_count": 64
+    },
+    {
+      "crc32": "6ac1f1b3",
+      "original_count": 190,
+      "piece_count": 60
+    },
+    {
+      "crc32": "b5c82340",
+      "original_count": 168,
+      "piece_count": 62
+    },
+    {
+      "crc32": "d9247936",
+      "original_count": 38,
+      "piece_count": 60
+    },
+    {
+      "crc32": "5129bc5e",
+      "original_count": 133,
+      "piece_count": 62
+    },
+    {
+      "crc32": "b5b37a32",
+      "original_count": 40,
+      "piece_count": 60
+    },
+    {
+      "crc32": "5b9dd65a",
+      "original_count": 180,
+      "piece_count": 62
+    },
+    {
+      "crc32": "e86c1813",
+      "original_count": 197,
+      "piece_count": 64
+    },
+    {
+      "crc32": "5b39ba1c",
+      "original_count": 48,
+      "piece_count": 62
+    },
+    {
+      "crc32": "477e03aa",
+      "original_count": 119,
+      "piece_count": 62
+    },
+    {
+      "crc32": "b519b8dc",
+      "original_count": 72,
+      "piece_count": 64
+    },
+    {
+      "crc32": "1ae31a89",
+      "original_count": 154,
+      "piece_count": 60
+    },
+    {
+      "crc32": "adeb42bd",
+      "original_count": 99,
+      "piece_count": 64
+    },
+    {
+      "crc32": "de69669d",
+      "original_count": 215,
+      "piece_count": 60
+    },
+    {
+      "crc32": "d45df20c",
+      "original_count": 212,
+      "piece_count": 60
+    },
+    {
+      "crc32": "8a521997",
+      "original_count": 398,
+      "piece_count": 50
+    },
+    {
+      "crc32": "79b7dd5f",
+      "original_count": 0,
+      "piece_count": 50
+    },
+    {
+      "crc32": "33a6c61b",
+      "original_count": 179,
+      "piece_count": 64
+    },
+    {
+      "crc32": "c9d0a07b",
+      "original_count": 184,
+      "piece_count": 60
+    },
+    {
+      "crc32": "e343de25",
+      "original_count": 61,
+      "piece_count": 37
+    },
+    {
+      "crc32": "0bf4e2ab",
+      "original_count": 128,
+      "piece_count": 62
+    },
+    {
+      "crc32": "6ead4446",
+      "original_count": 162,
+      "piece_count": 60
+    },
+    {
+      "crc32": "535ba98b",
+      "original_count": 237,
+      "piece_count": 64
+    },
+    {
+      "crc32": "6ad22b2f",
+      "original_count": 181,
+      "piece_count": 62
+    },
+    {
+      "crc32": "370b4b38",
+      "original_count": 120,
+      "piece_count": 64
+    },
+    {
+      "crc32": "20339242",
+      "original_count": 168,
+      "piece_count": 50
+    },
+    {
+      "crc32": "a7527a67",
+      "original_count": 197,
+      "piece_count": 64
+    },
+    {
+      "crc32": "8f6ed2a8",
+      "original_count": 140,
+      "piece_count": 50
+    },
+    {
+      "crc32": "bb6d765e",
+      "original_count": 363,
+      "piece_count": 50
+    },
+    {
+      "crc32": "63904b4b",
+      "original_count": 193,
+      "piece_count": 37
+    },
+    {
+      "crc32": "34f99bec",
+      "original_count": 125,
+      "piece_count": 64
+    },
+    {
+      "crc32": "64ab0b3d",
+      "original_count": 55,
+      "piece_count": 62
+    },
+    {
+      "crc32": "3e8a03f9",
+      "original_count": 72,
+      "piece_count": 64
+    },
+    {
+      "crc32": "265061ad",
+      "original_count": 397,
+      "piece_count": 50
+    },
+    {
+      "crc32": "38b93bf1",
+      "original_count": 48,
+      "piece_count": 64
+    },
+    {
+      "crc32": "687c6563",
+      "original_count": 126,
+      "piece_count": 60
+    },
+    {
+      "crc32": "c29057f4",
+      "original_count": 199,
+      "piece_count": 60
+    },
+    {
+      "crc32": "a5f3a5ca",
+      "original_count": 154,
+      "piece_count": 62
+    },
+    {
+      "crc32": "543b17e0",
+      "original_count": 0,
+      "piece_count": 50
+    },
+    {
+      "crc32": "b7eb7fc0",
+      "original_count": 191,
+      "piece_count": 50
+    },
+    {
+      "crc32": "9d6b02ae",
+      "original_count": 129,
+      "piece_count": 37
+    },
+    {
+      "crc32": "26a65179",
+      "original_count": 104,
+      "piece_count": 64
+    },
+    {
+      "crc32": "f4dd1a2e",
+      "original_count": 52,
+      "piece_count": 62
+    },
+    {
+      "crc32": "3f28fcfe",
+      "original_count": 190,
+      "piece_count": 60
+    },
+    {
+      "crc32": "57f2375f",
+      "original_count": 71,
+      "piece_count": 64
+    },
+    {
+      "crc32": "6f4c5900",
+      "original_count": 165,
+      "piece_count": 64
+    },
+    {
+      "crc32": "a841af2c",
+      "original_count": 168,
+      "piece_count": 62
+    },
+    {
+      "crc32": "59363bea",
+      "original_count": 180,
+      "piece_count": 62
+    },
+    {
+      "crc32": "20f76780",
+      "original_count": 13,
+      "piece_count": 60
+    },
+    {
+      "crc32": "5d8bfcd9",
+      "original_count": 121,
+      "piece_count": 62
+    },
+    {
+      "crc32": "83c4a676",
+      "original_count": 38,
+      "piece_count": 60
+    },
+    {
+      "crc32": "6d333065",
+      "original_count": 227,
+      "piece_count": 50
+    },
+    {
+      "crc32": "4156f6b3",
+      "original_count": 246,
+      "piece_count": 50
+    },
+    {
+      "crc32": "87759ed5",
+      "original_count": 58,
+      "piece_count": 60
+    },
+    {
+      "crc32": "2c861308",
+      "original_count": 48,
+      "piece_count": 62
+    },
+    {
+      "crc32": "c0976cca",
+      "original_count": 119,
+      "piece_count": 62
+    },
+    {
+      "crc32": "466ff3bd",
+      "original_count": 247,
+      "piece_count": 50
+    },
+    {
+      "crc32": "d658f295",
+      "original_count": 72,
+      "piece_count": 64
+    },
+    {
+      "crc32": "84daa9a7",
+      "original_count": 134,
+      "piece_count": 62
+    },
+    {
+      "crc32": "580f5a52",
+      "original_count": 62,
+      "piece_count": 64
+    },
+    {
+      "crc32": "d31bb629",
+      "original_count": 154,
+      "piece_count": 60
+    },
+    {
+      "crc32": "89af95ae",
+      "original_count": 363,
+      "piece_count": 50
+    },
+    {
+      "crc32": "93c8ccff",
+      "original_count": 193,
+      "piece_count": 37
+    },
+    {
+      "crc32": "d4c3fd40",
+      "original_count": 133,
+      "piece_count": 62
+    },
+    {
+      "crc32": "24614770",
+      "original_count": 125,
+      "piece_count": 64
+    },
+    {
+      "crc32": "792a7445",
+      "original_count": 55,
+      "piece_count": 62
+    },
+    {
+      "crc32": "ae0d37af",
+      "original_count": 135,
+      "piece_count": 64
+    },
+    {
+      "crc32": "c9eb027a",
+      "original_count": 335,
+      "piece_count": 50
+    },
+    {
+      "crc32": "fe62c53e",
+      "original_count": 147,
+      "piece_count": 50
+    },
+    {
+      "crc32": "22b8d46d",
+      "original_count": 0,
+      "piece_count": 50
+    },
+    {
+      "crc32": "3f273068",
+      "original_count": 76,
+      "piece_count": 64
+    },
+    {
+      "crc32": "0ebf00ed",
+      "original_count": 179,
+      "piece_count": 64
+    },
+    {
+      "crc32": "0b7d5317",
+      "original_count": 40,
+      "piece_count": 60
+    },
+    {
+      "crc32": "4a59d381",
+      "original_count": 99,
+      "piece_count": 64
+    },
+    {
+      "crc32": "9aab67d0",
+      "original_count": 92,
+      "piece_count": 37
+    },
+    {
+      "crc32": "213866ca",
+      "original_count": 39,
+      "piece_count": 64
+    },
+    {
+      "crc32": "8926c8f0",
+      "original_count": 162,
+      "piece_count": 60
+    },
+    {
+      "crc32": "4639f120",
+      "original_count": 72,
+      "piece_count": 64
+    },
+    {
+      "crc32": "54d8755c",
+      "original_count": 258,
+      "piece_count": 64
+    },
+    {
+      "crc32": "71f2588c",
+      "original_count": 215,
+      "piece_count": 60
+    },
+    {
+      "crc32": "6c0188ae",
+      "original_count": 46,
+      "piece_count": 64
+    },
+    {
+      "crc32": "2174e7a5",
+      "original_count": 395,
+      "piece_count": 62
+    },
+    {
+      "crc32": "d36edb52",
+      "original_count": 121,
+      "piece_count": 37
+    },
+    {
+      "crc32": "cad4abe6",
+      "original_count": 140,
+      "piece_count": 50
+    },
+    {
+      "crc32": "f7154542",
+      "original_count": 197,
+      "piece_count": 64
+    },
+    {
+      "crc32": "72d2e5f8",
+      "original_count": 354,
+      "piece_count": 50
+    },
+    {
+      "crc32": "e8205f2c",
+      "original_count": 102,
+      "piece_count": 64
+    },
+    {
+      "crc32": "69961814",
+      "original_count": 184,
+      "piece_count": 60
+    },
+    {
+      "crc32": "9792c1a0",
+      "original_count": 61,
+      "piece_count": 37
+    },
+    {
+      "crc32": "63ce6563",
+      "original_count": 237,
+      "piece_count": 64
+    },
+    {
+      "crc32": "024d1e53",
+      "original_count": 397,
+      "piece_count": 50
+    },
+    {
+      "crc32": "e1d905c3",
+      "original_count": 212,
+      "piece_count": 60
+    },
+    {
+      "crc32": "359cde1f",
+      "original_count": 151,
+      "piece_count": 64
+    },
+    {
+      "crc32": "1ead9104",
+      "original_count": 181,
+      "piece_count": 62
+    },
+    {
+      "crc32": "07e65d29",
+      "original_count": 167,
+      "piece_count": 60
+    },
+    {
+      "crc32": "86d99d94",
+      "original_count": 197,
+      "piece_count": 64
+    },
+    {
+      "crc32": "ef9c7342",
+      "original_count": 267,
+      "piece_count": 50
+    },
+    {
+      "crc32": "5e1012bd",
+      "original_count": 128,
+      "piece_count": 62
+    },
+    {
+      "crc32": "f42f73a1",
+      "original_count": 43,
+      "piece_count": 60
+    },
+    {
+      "crc32": "03168866",
+      "original_count": 48,
+      "piece_count": 64
+    },
+    {
+      "crc32": "ffb24ae0",
+      "original_count": 82,
+      "piece_count": 60
+    },
+    {
+      "crc32": "8989e861",
+      "original_count": 146,
+      "piece_count": 60
+    },
+    {
+      "crc32": "fb97a652",
+      "original_count": 285,
+      "piece_count": 50
+    },
+    {
+      "crc32": "445d297e",
+      "original_count": 126,
+      "piece_count": 60
+    },
+    {
+      "crc32": "0b13a33b",
+      "original_count": 70,
+      "piece_count": 60
+    },
+    {
+      "crc32": "a2c037be",
+      "original_count": 199,
+      "piece_count": 60
+    },
+    {
+      "crc32": "8d037cad",
+      "original_count": 0,
+      "piece_count": 50
+    },
+    {
+      "crc32": "9aa47dfa",
+      "original_count": 162,
+      "piece_count": 37
+    },
+    {
+      "crc32": "c63d59fa",
+      "original_count": 120,
+      "piece_count": 64
+    },
+    {
+      "crc32": "1132e5b3",
+      "original_count": 154,
+      "piece_count": 62
+    },
+    {
+      "crc32": "9396dbe4",
+      "original_count": 398,
+      "piece_count": 50
+    },
+    {
+      "crc32": "92e50b75",
+      "original_count": 85,
+      "piece_count": 60
+    },
+    {
+      "crc32": "1222f954",
+      "original_count": 274,
+      "piece_count": 60
+    },
+    {
+      "crc32": "ba00bcc0",
+      "original_count": 199,
+      "piece_count": 62
+    },
+    {
+      "crc32": "46077a99",
+      "original_count": 209,
+      "piece_count": 50
+    }
+  ]
+}

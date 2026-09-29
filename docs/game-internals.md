@@ -16,6 +16,11 @@ The disks do not use AmigaDOS. Files are read through the game's own directory:
   directory order; a file's offset is the sum of the lengths before it.
 - Disk 1 keeps its raw boot loader at `$CA000`, so its files must end before
   that. Disk 2 has free space from `$D9E28` to the end of the disk.
+- The game's disk loader (`$7FB2`) identifies a disk by the first four
+  characters of its first file name: `main` on disk 1, `Grou` (`Ground1`) on
+  disk 2. After a save-disk swap the editor recognizes disk 2 by its first
+  file name `Ground1`, and it refuses any disk whose directory starts with
+  `Reserved` (a game disk) as a save disk.
 
 ## Game variables
 
@@ -75,3 +80,7 @@ The editor's erase mode and `F` flip match bits 13 and 14.
 | Raw key `$12` | E |
 | Raw key `$23` | F (no gameplay action in the original game) |
 | Raw keys `$4E`, `$4F` | Cursor right, left |
+| Raw keys `$21`, `$28` | S, L (save and load menus) |
+| Raw keys `$4C`, `$4D`, `$44`, `$43`, `$45`, `$46`, `$41` | Cursor up, down, Return, Enter, Esc, Del, Backspace (menu) |
+| Raw keys `$60`/`$61`, `$E0`/`$E1` | Left/right Shift down, up |
+| `$A526`, `$A586` | The game's raw-key-to-ASCII tables, unshifted and shifted (save names) |
