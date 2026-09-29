@@ -4,6 +4,8 @@ A patch that adds an in-game terrain editor to Amiga Lemmings (1991).
 
 ![Editor open in level 1, with a flipped piece on the cursor](docs/images/editor.png)
 
+Watch it in action: [YouTube](https://youtu.be/q9s-7uenz_o)
+
 ## Requirements
 
 - Amiga 500, Kickstart 1.3, 512K chip + 512K slow RAM, PAL
