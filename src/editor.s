@@ -1,129 +1,168 @@
-; Lemmings In-Game Level Editor V1.2.1
+; Lemmings In-Game Level Editor V2.0
 ; Copyright (c) 2026 Timo Heimonen <timo.heimonen@proton.me>
 ; Licensed under the MIT License. See the LICENSE file for details.
 ;
-; Lemmings in-game terrain editor (68000, position independent).
+; Lemmings custom level editor (68000, position independent).
 ;
 ; Loaded by the bootstrap into a reserved block of slow RAM and entered once at
-; "install", which patches jumps into the game's main loop, keyboard interrupt
-; and level setup. All game addresses refer to the supported game version,
-; whose disk images patch.py identifies by SHA-256. Inside the hooks A4 points
-; to the editor's own state and A5 to the game's global variables.
-GFX             equ $8000
+; "install", which patches jumps into the game's main loop, keyboard interrupt,
+; level setup and title screen. The editor edits custom levels: new ones from
+; the title screen's CUSTOM rating and the levels of a level disk (under
+; WHDLoad the .lvl files of the directory Levels). It opens by itself when an
+; edited level starts; the original levels are played unchanged. All game
+; addresses refer to the supported game version, whose disk images patch.py
+; identifies by SHA-256. Inside the hooks A4 points to the editor's own state
+; and A5 to the game's global variables.
+GFX             equ $b000
 GFX_MAX_BYTES   equ 42200
 EDITOR_RESERVE  equ $20000
 ; CPU-only disk workspace after the largest Ground resource. These buffers
-; are initialized by their producers, not by the pre-Ground storage clear.
-DISK_WORK       equ $12800
+; are initialized by their producers, not by the storage clear.
+DISK_WORK       equ $15800
 DISK_TRACK      equ DISK_WORK
 DISK_VERIFY     equ DISK_TRACK+TRACK_BYTES
 DISK_HEADER     equ DISK_VERIFY+TRACK_BYTES
-DISK_ROWS       equ DISK_HEADER+TRACK_BYTES
-DISK_REINDEX    equ DISK_ROWS+32*20
-DISK_WORK_END   equ DISK_REINDEX+INDEX_BYTES
+DISK_WORK_END   equ DISK_HEADER+TRACK_BYTES
         xdef GFX_MAX_BYTES,EDITOR_RESERVE,DISK_WORK_END
 CHIP_TEXT       equ $21d00            ; above the bootstrap appended to Code
 CHIP_COPPER     equ $22c00
         xdef CHIP_TEXT,CHIP_COPPER
 TEXT_BYTES      equ 3840
-active          equ 0
-old_pause       equ 1
-last_key        equ 2
-negative        equ 3
-last_left       equ 4
-last_right      equ 5
-piece_id        equ 6
-piece_count     equ 8
-brush_x         equ 10
-brush_y         equ 12
-width           equ 14
-height          equ 16
-stride          equ 18
-plane_size      equ 20
-image_ptr       equ 24
-mask_ptr        equ 28
-gfx_ptr         equ 32
-mode            equ 36
-origin_x        equ 38
-origin_y        equ 40
-origin_q        equ 42              ; destination byte column of the piece's left edge
-source_y        equ 44
-valid           equ 46
-paint_count     equ 48
-pending_toggle  equ 52
-pending_cycle   equ 53
-dirty           equ 54
-last_x          equ 56
-last_y          equ 58
-last_scroll     equ 60
-suppress_mouse  equ 62
-render_count    equ 64
-flipped         equ 68
-pending_flip    equ 69
-dplane          equ 72              ; destination plane stride
-dest_ptr        equ 76              ; destination surface base
-row_stride      equ 80
-dest_height     equ 82
-clip_lo         equ 84              ; first writable destination byte column
-clip_span       equ 86              ; number of writable byte columns
-shown_x         equ 88              ; values currently drawn in the status block
-shown_y         equ 90
-shown_piece     equ 92
-shown_sign      equ 94
-shown_flip      equ 95
-original_count  equ 96
-remaining       equ 98
-shown_remaining equ 100
-level_id        equ 102
-base_crc        equ 104
-load_pending    equ 108             ; accepted request, retained across level capture
-load_reopen     equ 109             ; return to the editor after original startup
-load_error      equ 110             ; freshly loaded base rejected the request
-disk_busy       equ 112             ; synchronous ownership of the back buffer
-disk_cancel     equ 113
-disk_committing equ 114             ; finish verification even if Esc is pressed
-disk_raw        equ 116
-disk_old_adk    equ 120
-disk_old_dma    equ 122
-disk_old_int    equ 124
-disk_drive      equ 126             ; CIA-B select bit, 3..6
-disk_cylinder   equ 127
-disk_redraw     equ 128
-disk_track_no   equ 130
-disk_free       equ 132
-disk_rows       equ 134
-menu_mode       equ 136             ; 0 = closed, otherwise the menu's state
-menu_kind       equ 137             ; 0 = save, 1 = load
-menu_sel        equ 138             ; selected row
-menu_rows       equ 140
-menu_new        equ 142             ; the first row is "new save"
-save_drive      equ 143             ; drive of the last save disk + 1, or 0
-menu_drive      equ 144
-native_drive    equ 145             ; drive the game reads disk 2 from
-native_used     equ 146             ; a disk was taken from that drive
-pending_menu    equ 147             ; S or L pressed: 1 = save, 2 = load
-key_head        equ 148
-key_tail        equ 149
-key_queue       equ 150             ; 16 raw key codes
-shift           equ 166
-name_len        equ 167
-name            equ 168             ; 16 characters, NUL padded
-name_end        equ 184             ; always NUL
-menu_action     equ 185
-menu_after      equ 186
-menu_prompt     equ 187             ; drive shown in the save-disk prompt
-menu_msg        equ 188
-palette_save    equ 192             ; five copper colour values
-menu_slot       equ 202
-list_ok         equ 204             ; the list reflects a successful scan
-menu_line       equ 206             ; 42-character text line
-STATE_SIZE      equ 248
-MAX_PLACEMENTS  equ 400
+TRACK_BYTES     equ 11*512
+MAX_PLACEMENTS  equ 399               ; terrain pieces of a level: the list needs an end marker
+
+; Editor state, relative to "state".
+        rsreset
+image_ptr       rs.l 1              ; selected piece: colour planes
+mask_ptr        rs.l 1              ; and mask
+gfx_ptr         rs.l 1              ; the level's Ground graphics in the block
+plane_size      rs.l 1
+paint_count     rs.l 1              ; pieces placed since the level started
+dplane          rs.l 1              ; destination plane stride
+dest_ptr        rs.l 1              ; destination surface base
+disk_raw        rs.l 1              ; raw MFM buffer of a transfer
+menu_msg        rs.l 1              ; message shown by the menu
+saved_crc       rs.l 1              ; CRC-32 of custom_record as loaded or last saved
+piece_id        rs.w 1
+piece_count     rs.w 1
+brush_x         rs.w 1              ; cursor in level coordinates
+brush_y         rs.w 1
+width           rs.w 1              ; selected piece
+height          rs.w 1
+stride          rs.w 1
+mode            rs.w 1              ; compositor target
+origin_x        rs.w 1
+origin_y        rs.w 1
+origin_q        rs.w 1              ; destination byte column of the piece's left edge
+source_y        rs.w 1
+row_stride      rs.w 1
+dest_height     rs.w 1
+clip_lo         rs.w 1              ; first writable destination byte column
+clip_span       rs.w 1              ; number of writable byte columns
+last_x          rs.w 1              ; cursor and scroll of the last redraw
+last_y          rs.w 1
+last_scroll     rs.w 1
+remaining       rs.w 1              ; terrain pieces that may still be placed
+shown_x         rs.w 1              ; values currently drawn in the status block
+shown_y         rs.w 1
+shown_piece     rs.w 1
+shown_remaining rs.w 1
+shown_sign      rs.b 1
+shown_flip      rs.b 1
+pending_toggle  rs.b 1              ; E pressed (read together with the next byte)
+pending_cycle   rs.b 1              ; left and right arrows, signed count
+flipped         rs.b 1              ; brush orientation (cleared together with the next byte)
+pending_flip    rs.b 1              ; F pressed
+disk_old_adk    rs.w 1
+disk_old_dma    rs.w 1
+disk_old_int    rs.w 1
+disk_track_no   rs.w 1
+list_page       rs.w 1
+list_sel        rs.w 1              ; selected row on the page
+list_count      rs.w 1              ; levels on the level disk
+list_hover      rs.w 1              ; text row the pointer was on
+custom_number   rs.w 1              ; list number of the custom level, 1..318, 0 for a new level
+custom_slot     rs.w 1              ; its slot (floppy), list entry (WHDLoad), -1 new
+drag_col        rs.w 1              ; first cell of a steel area being dragged
+drag_row        rs.w 1
+obj_type        rs.w 1              ; object type placed by the left button (objects.s)
+obj_flags       rs.w 1              ; its drawing flags
+obj_hover       rs.w 1              ; slot of the object under the cursor, or -1
+obj_dx          rs.w 1              ; cursor minus the dragged object's position
+obj_dy          rs.w 1
+snap_x          rs.w 1              ; the nearest position beside a neighbour (snap)
+snap_y          rs.w 1
+snap_xs         rs.w 1              ; opaque columns and rows of the mask (mask_bounds)
+snap_xe         rs.w 1
+snap_ys         rs.w 1
+snap_ye         rs.w 1
+snap_vw         rs.w 1              ; opaque width: the step beside a neighbour
+snap_rows       rs.w 6              ; row offsets beside, below, above an upright and a flipped neighbour
+snap_reach_x    rs.w 1              ; farther neighbours cannot be snapped to
+snap_reach_y    rs.w 1
+snap_key        rs.w 1              ; mask of snap_xs..snap_ye: piece + 1, $100 + object type, 0 none
+palette_save    rs.w 5              ; view colours replaced by the menu
+list_palette_rows rs.w 13           ; palette number of each text row of the list
+active          rs.b 1              ; the editor is open
+negative        rs.b 1              ; the brush erases
+last_left       rs.b 1              ; mouse buttons of the last frame
+last_right      rs.b 1
+valid           rs.b 1              ; the level's pieces are available
+dirty           rs.b 1              ; the view must be redrawn
+load_reopen     rs.b 1              ; open the editor at the next frame
+disk_busy       rs.b 1              ; synchronous ownership of the back buffer
+disk_cancel     rs.b 1
+disk_committing rs.b 1              ; finish verification even if Esc is pressed
+disk_drive      rs.b 1              ; CIA-B select bit, 3..6
+disk_cylinder   rs.b 1
+disk_redraw     rs.b 1
+menu_mode       rs.b 1              ; 0 = closed, otherwise the menu's state
+menu_kind       rs.b 1              ; 0 = saving, 1 = the title only
+native_drive    rs.b 1              ; drive the game reads disk 2 from
+native_used     rs.b 1              ; a disk was taken from that drive
+pending_menu    rs.b 1              ; S or N pressed: 1 = save, 2 = title
+key_head        rs.b 1
+key_tail        rs.b 1
+shift           rs.b 1
+custom_tier     rs.b 1              ; the title screen shows CUSTOM
+list_open       rs.b 1              ; the custom level list takes the keys
+list_drive      rs.b 1
+title_disk      rs.b 1              ; transport runs on the title screen
+list_old32      rs.b 1              ; the game's text mode flag $32(A5)
+list_retry      rs.b 1              ; a click searches for the disk again
+custom_play     rs.b 1              ; the game plays custom_record
+list_played     rs.b 1              ; a custom level was played from the list
+list_mode       rs.b 1              ; the list shows 0: levels, 1: graphics styles
+list_players    rs.b 1              ; the list is for two players (2 Player in CUSTOM)
+custom_edit     rs.b 1              ; the custom level is being edited
+custom_test     rs.b 1              ; the next level start is a test play
+title_len       rs.b 1              ; characters in title_buf
+edit_mode       rs.b 1              ; 0 terrain, 1 steel, 2 objects, 3 parameters
+pending_mode    rs.b 1              ; T, O or P pressed: the mode it asks for
+pending_select  rs.b 1              ; up and down arrows, signed count
+steel_drag      rs.b 1              ; a new steel area is being dragged
+obj_drag        rs.b 1              ; dragged slot + 1, or 0
+param_sel       rs.b 1              ; selected parameter (params.s)
+status_dirty    rs.b 1              ; redraw the status block: 1 values, -1 all
+pending_escape  rs.b 1              ; Esc pressed while a custom level is edited
+leave_now       rs.b 1              ; the leave menu was confirmed
+leaving         rs.b 1              ; the level ends to leave the editor
+snap            rs.b 1              ; pieces and objects snap to their neighbours
+pending_snap    rs.b 1              ; G pressed
+shown_snap      rs.b 1
+behind          rs.b 1              ; the brush draws behind the terrain
+pending_behind  rs.b 1              ; B pressed
+pending_marker  rs.b 1              ; M pressed
+key_queue       rs.b 16             ; raw key codes for the menu and the list
+menu_line       rs.b 42             ; a text line
+        rseven
+STATE_SIZE      rs.b 0
 
         org 0
 ; Install the hooks: keyboard interrupt ($174E), frame start ($654), gameplay
-; input ($680), level setup ($2762) and end of frame drawing ($688). Also
-; prepares the font and the copper list continuation for the status block.
+; input ($680), level setup ($2762), end of frame drawing ($688), the title
+; screen and the custom levels' hooks (title.s). Also prepares the font and
+; the copper list continuation for the status block.
 install:
         movem.l d0-d7/a0-a6,-(sp)
         lea state(pc),a4
@@ -156,7 +195,7 @@ install:
         move.l a0,$68a
         move.w #$4ef9,$688
         move.w #$4e71,$68e
-        bsr install_load_hooks
+        bsr title_install
         lea copper_template(pc),a0
         lea CHIP_COPPER,a1
         move.w #(copper_end-copper_template)/2-1,d0
@@ -165,31 +204,41 @@ install:
         movem.l (sp)+,d0-d7/a0-a6
         rts
 
-; Level setup hook. Resets the editor, loads and unpacks the level's Ground
-; graphics into editor memory (the game later overwrites its own copy with
-; sound data) and counts the terrain pieces of the level's graphics set.
+; Level setup hook. Resets the editor. When a custom level is edited, loads
+; and unpacks the level's Ground graphics into editor memory (the game later
+; overwrites its own copy with sound data), counts the terrain pieces of its
+; graphics set and opens the editor at the first frame, except for a test
+; play.
 capture:
         jsr $280a
         movem.l d0-d7/a0-a6,-(sp)
         lea state(pc),a4
         bsr hide_status
         clr.b active(a4)
-        clr.b load_error(a4)
         clr.b valid(a4)
+        clr.b load_reopen(a4)
         clr.b negative(a4)
+        clr.b behind(a4)
+        clr.b pending_behind(a4)
+        clr.b pending_marker(a4)
         clr.w flipped(a4)       ; orientation and queued F press
         clr.w pending_toggle(a4)
         clr.b pending_menu(a4)
         clr.w piece_id(a4)
         clr.l paint_count(a4)
-        move.w $42(a5),level_id(a4)
+        clr.b steel_drag(a4)
+        clr.b obj_drag(a4)
+        move.w #-1,obj_hover(a4)
+        clr.b pending_mode(a4)
+        clr.b pending_select(a4)
+        clr.b pending_escape(a4)
+        clr.w snap_key(a4)              ; the style may have changed
+        tst.b custom_edit(a4)
+        beq .done
+        tst.b custom_test(a4)
+        seq load_reopen(a4)
+        clr.b custom_test(a4)
         bsr count_placements
-        lea $c5a6,a0
-        move.l #2048,d0
-        moveq #-1,d1
-        bsr crc32
-        move.l d0,base_crc(a4)
-        move.b $26(a5),last_key(a4)
         lea ground_name(pc),a0
         move.w $c5c0,d0
         cmp.w #4,d0
@@ -217,43 +266,46 @@ capture:
 .counted:
         move.w d0,piece_count(a4)
         sne valid(a4)
-.done:  bsr check_loaded_base
-        movem.l (sp)+,d0-d7/a0-a6
+.done:  movem.l (sp)+,d0-d7/a0-a6
         jsr $2826
         jmp $276a
 
 ; Capture press edges before the original CIA acknowledgement. Releases never
-; overwrite queued presses, so a quick tap survives a long brush render.
+; overwrite queued presses, so a quick tap survives a long brush render. Keys
+; reach the editor only while a custom level is edited. An Esc for the
+; editor, its menu or the list reaches the game as a release, so it never
+; ends the level.
 keyboard:
         move.b d0,$26(a5)
         lea state(pc),a4
         tst.b disk_busy(a4)
         beq.s .menu
         cmp.b #$45,d0                  ; Esc cancels a disk operation
-        bne.s .ack
+        bne .ack
         st disk_cancel(a4)
-        bra.s .ack
+        bra.s .own
 .menu:  tst.b menu_mode(a4)
+        bne.s .queue
+        tst.b list_open(a4)
         beq.s .editor
-        bsr menu_queue_key
-        bra.s .ack
+.queue: bsr menu_queue_key
+        bra.s .own
 .editor:
+        tst.b custom_edit(a4)
+        beq .ack
+        cmp.b #$45,d0                  ; Esc: leave, or back to the editor
+        bne.s .keys
+        st pending_escape(a4)
+.own:   cmp.b #$45,d0                  ; the game gets the editor's Esc as a release
+        bne .ack
+        move.b #$c5,d0
+        bra .ack
+.keys:  bsr editor_shift
         tst.b d0
         bmi.s .ack
-        cmp.b #$21,d0                  ; S: save menu
-        bne.s .load
-        tst.b active(a4)
-        beq.s .ack
-        move.b #1,pending_menu(a4)
-        bra.s .ack
-.load:  cmp.b #$28,d0                  ; L: load menu
-        bne.s .toggle
-        tst.b active(a4)
-        beq.s .ack
-        move.b #2,pending_menu(a4)
-        bra.s .ack
-.toggle:
-        cmp.b #$12,d0
+        bsr custom_key                 ; params.s
+        bne.s .ack
+        cmp.b #$12,d0                  ; E: test play, or back to the editor
         bne.s .right
         eori.b #1,pending_toggle(a4)
         bra.s .ack
@@ -266,26 +318,56 @@ keyboard:
         subq.b #1,pending_cycle(a4)
         bra.s .ack
 .flip:  cmp.b #$23,d0           ; F has no original gameplay action
-        bne.s .ack
+        bne.s .behind
         tst.b active(a4)
         beq.s .ack
         eori.b #1,pending_flip(a4)
+        bra.s .ack
+.behind:
+        cmp.b #$35,d0           ; B: neither has it
+        bne.s .ack
+        tst.b active(a4)
+        beq.s .ack
+        eori.b #1,pending_behind(a4)
 .ack:   move.b #0,$bfec01
         jmp $175a
 
-; Frame start hook. Handles E (enter/leave editor mode, saving and restoring
-; the game's pause flag), piece cycling, flip, scrolling and the mouse buttons,
-; and paints into the level when the left button is pressed. While the editor
-; is open the viewport is redrawn only when something visible changed.
+; D0: raw key. Track the shift keys for the editor's steps of ten.
+editor_shift:
+        cmp.b #$60,d0
+        beq.s .down
+        cmp.b #$61,d0
+        beq.s .down
+        cmp.b #$e0,d0
+        beq.s .up
+        cmp.b #$e1,d0
+        bne.s .done
+.up:    clr.b shift(a4)
+        rts
+.down:  st shift(a4)
+.done:  rts
+
+; Frame start hook. Opens the editor at the first frame of an edited level,
+; pausing the game, and handles E (test play), Esc, G (snap), B (behind), the menus, the mode keys, piece
+; cycling, flip, scrolling and the mouse buttons; paints into the level when
+; the left button is pressed. While the editor is open the viewport is redrawn
+; only when something visible changed.
 frame:
         movem.l d0-d7/a0-a6,-(sp)
         lea state(pc),a4
-        tst.b load_pending(a4)
-        bne restart_saved_level
         tst.b load_reopen(a4)
         beq.s .input
         clr.b load_reopen(a4)
-        move.b #1,pending_toggle(a4)
+        tst.b valid(a4)
+        beq.s .input
+        st active(a4)
+        st $39(a5)
+        btst #6,$bfe001
+        seq last_left(a4)
+        btst #2,$16(a6)
+        seq last_right(a4)
+        clr.l $144f2           ; hide the skill-selection sprite
+        bsr show_status
 .input: move.b disk_redraw(a4),dirty(a4)
         clr.b disk_redraw(a4)
         tst.b menu_mode(a4)
@@ -296,14 +378,42 @@ frame:
         clr.b pending_menu(a4)
         tst.b active(a4)
         beq.s .editor_input
-        bsr menu_open
+        subq.b #1,d0                    ; 1: save, 2: title only
+        bsr level_save_open
         bra.s .menu_idle
 .menu:  bsr menu_frame
+        tst.b leave_now(a4)
+        beq.s .menu_idle
+        clr.b leave_now(a4)
+        bsr custom_leave
+        bra .game
 .menu_idle:
         movem.l (sp)+,d0-d7/a0-a6
         clr.w $3e(a5)
         jmp $646
 .editor_input:
+        tst.b pending_behind(a4)        ; B: the brush draws behind the terrain
+        beq.s .snap_key
+        clr.b pending_behind(a4)
+        tst.b edit_mode(a4)
+        bne.s .snap_key
+        not.b behind(a4)
+        clr.b negative(a4)              ; add, erase or behind
+        st dirty(a4)
+.snap_key:
+        tst.b pending_marker(a4)        ; M: the two-player marker
+        beq.s .snap_toggle
+        clr.b pending_marker(a4)
+        cmp.b #2,edit_mode(a4)
+        bne.s .snap_toggle
+        bsr object_marker
+.snap_toggle:
+        tst.b pending_snap(a4)          ; G: snap on or off
+        beq.s .inputs
+        clr.b pending_snap(a4)
+        not.b snap(a4)
+        st dirty(a4)
+.inputs:
         move.w sr,-(sp)
         ori.w #$0700,sr
         moveq #0,d6
@@ -312,41 +422,39 @@ frame:
         clr.w pending_toggle(a4)
         move.b pending_flip(a4),d7
         clr.b pending_flip(a4)
+        move.b pending_select(a4),d5
+        clr.b pending_select(a4)
+        move.b pending_escape(a4),d4
+        clr.b pending_escape(a4)
         move.w (sp)+,sr
         lsr.w #8,d0
+        tst.b d4
+        beq.s .toggle
+        moveq #1,d0                     ; Esc during a test play works as E
+        tst.b active(a4)
+        beq.s .toggle
+        bsr custom_escape               ; opens the leave menu or leaves
+        tst.b active(a4)
+        beq .game
+        bra .menu_idle
+.toggle:
         tst.b d0
         beq.s .cycle
-        st dirty(a4)
-        tst.b $30(a5)           ; single-player only
-        bne .buttons
-        tst.b valid(a4)
-        beq .buttons
-        tst.b $29(a5)           ; no entry during level completion
-        bne .buttons
+        tst.b custom_edit(a4)
+        beq.s .cycle
+        tst.b $29(a5)           ; not during level completion
+        bne.s .cycle
         tst.b $2d(a5)
-        bne .buttons
-        not.b active(a4)
-        beq.s .leave
-        move.b $39(a5),old_pause(a4)
-        st $39(a5)
-        btst #6,$bfe001
-        seq last_left(a4)
-        btst #2,$16(a6)
-        seq last_right(a4)
-        clr.l $144f2           ; hide the skill-selection sprite
-        bsr show_status
-        bra .buttons
-.leave: move.b old_pause(a4),$39(a5)
-        st suppress_mouse(a4)
-        clr.b $27(a5)           ; do not replay editor keys in gameplay
-        clr.b $28(a5)
-        bsr hide_status
-        bra .buttons
+        beq custom_toggle
 .cycle: move.w d6,d0
         tst.b active(a4)
-        beq .buttons
-        tst.b d0
-        beq .buttons
+        beq .done
+        tst.b edit_mode(a4)
+        beq.s .piece
+        bsr mode_keys                   ; objects and parameters
+        bra.s .buttons
+.piece: tst.b d0
+        beq.s .buttons
         st dirty(a4)
         ext.w d0
         add.w d0,piece_id(a4)
@@ -364,17 +472,32 @@ frame:
         move.w d0,piece_id(a4)
         bra.s .wrap_high
 .buttons:
-        tst.b active(a4)
-        beq .done
         st $39(a5)
-        tst.b d7
+        bsr mode_switch
+        tst.b d7                        ; F
         beq.s .brush
-        not.b flipped(a4)
+        move.b edit_mode(a4),d0
+        beq.s .flip
+        subq.b #2,d0
+        bne.s .brush
+        bsr object_draw_mode
+        bra.s .brush
+.flip:  not.b flipped(a4)
         st dirty(a4)
 .brush:
         bsr scroll
         bsr coordinates
         bsr descriptor
+        move.b edit_mode(a4),d0
+        beq.s .pieces
+        subq.b #2,d0
+        bmi.s .steel
+        bne .done                       ; parameters: keys only
+        bsr object_input
+        bra .done
+.steel: bsr steel_input
+        bra .done
+.pieces:
         btst #2,$16(a6)
         seq d0
         cmp.b last_right(a4),d0
@@ -383,6 +506,7 @@ frame:
         tst.b d0
         beq.s .left
         not.b negative(a4)
+        clr.b behind(a4)
         st dirty(a4)
 .left:  btst #6,$bfe001
         seq d0
@@ -391,10 +515,17 @@ frame:
         move.b d0,last_left(a4)
         tst.b d0
         beq .done
+        bsr brush_snap                  ; where the preview shows the piece
         cmpi.w #160,$9dac
         bhs .done
         tst.w remaining(a4)
         beq .done
+        ; The record holds x unsigned: no piece may start left of the level.
+        move.w brush_x(a4),d0
+        move.w width(a4),d1
+        lsr.w #1,d1
+        cmp.w d1,d0
+        blt .done
         bsr record_placement
         move.w brush_x(a4),d0
         move.w brush_y(a4),d1
@@ -445,9 +576,9 @@ frame:
         clr.w $3e(a5)
         jmp $65c
 
-; Count only the terrain records consumed by normal level construction.
-; Special backgrounds bypass the original placement list. The scan is bounded
-; by the level record's terrain region even if no sentinel is present.
+; The level's terrain pieces up to the end marker, and the room left for the
+; brush: at most MAX_PLACEMENTS pieces in all. A special background has no
+; terrain pieces.
 count_placements:
         moveq #0,d0
         tst.w $c5c2
@@ -459,17 +590,16 @@ count_placements:
         cmp.w #MAX_PLACEMENTS,d0
         blo.s .scan
 .counted:
-        move.w d0,original_count(a4)
         neg.w d0
         add.w #MAX_PLACEMENTS,d0
         move.w d0,remaining(a4)
         rts
 
 ; Append one placement before changing terrain. The list is separate from the
-; game's level record; paint_count bounds its live entries. H holds a 13-bit
-; x origin, erase bit 13 and flip bit 14. L holds signed y in bits 7..15 and
-; the piece ID in bits 0..5. Negative x origins use 13-bit two's complement;
-; replay must sign-extend these, unlike the original unsigned x decoder.
+; game's level record; paint_count bounds its live entries. The entries have
+; the format of the record's terrain pieces: H holds the 13-bit x origin, erase
+; bit 13, flip bit 14 and behind bit 15; L holds signed y in bits 7..15 and the
+; piece in bits 0..5.
 record_placement:
         move.w brush_x(a4),d0
         move.w width(a4),d2
@@ -477,8 +607,12 @@ record_placement:
         sub.w d2,d0
         and.w #$1fff,d0
         tst.b negative(a4)
-        beq.s .flip
+        beq.s .behind
         or.w #$2000,d0
+.behind:
+        tst.b behind(a4)
+        beq.s .flip
+        or.w #$8000,d0
 .flip:  tst.b flipped(a4)
         beq.s .y
         or.w #$4000,d0
@@ -526,6 +660,268 @@ coordinates:
         move.w d0,brush_y(a4)
         rts
 
+; With snap on, put the brush beside the nearest terrain piece of the same
+; kind (brush_x/brush_y): the level's pieces and the placements.
+brush_snap:
+        tst.b snap(a4)
+        beq .done
+        movem.l d0-d7/a0-a3,-(sp)
+        move.w width(a4),d2
+        move.w height(a4),d3
+        movea.l mask_ptr(a4),a0
+        move.w piece_id(a4),d0
+        addq.w #1,d0
+        bsr snap_bounds
+        move.w snap_ys(a4),d0           ; upright rows
+        move.w snap_ye(a4),d1
+        move.w d3,d4                    ; flipped rows
+        sub.w d1,d4
+        move.w d3,d5
+        sub.w d0,d5
+        move.w d0,d6                    ; the brush's own rows
+        move.w d1,d7
+        tst.b flipped(a4)
+        beq.s .own
+        move.w d4,d6
+        move.w d5,d7
+.own:   lea snap_rows(a4),a0
+        bsr snap_offsets                ; beside an upright neighbour
+        move.w d4,d0
+        move.w d5,d1
+        bsr snap_offsets                ; and a flipped one
+        lsr.w #1,d2
+        lsr.w #1,d3
+        move.w brush_x(a4),d4
+        sub.w d2,d4
+        move.w brush_y(a4),d5
+        sub.w d3,d5
+        moveq #-1,d6
+        movea.w piece_id(a4),a2         ; kept in a register for the scan
+        tst.w $c5c2                     ; a special background has no pieces
+        bne.s .placed
+        lea $c6c6,a0
+        lea $cd06,a1
+        bsr.s .scan
+.placed:
+        lea placements(pc),a0
+        move.l paint_count(a4),d0
+        lsl.l #2,d0
+        lea 0(a0,d0.l),a1
+        bsr.s .scan
+        cmp.w #-1,d6
+        beq.s .keep
+        move.w snap_x(a4),d0
+        add.w d2,d0
+        move.w d0,brush_x(a4)
+        move.w snap_y(a4),d0
+        add.w d3,d0
+        move.w d0,brush_y(a4)
+.keep:  movem.l (sp)+,d0-d7/a0-a3
+.done:  rts
+; A0: terrain pieces up to A1 or the end marker. Pieces of another kind and
+; pieces out of reach are passed over first, at little cost.
+.scan:  cmpa.l a1,a0
+        bhs.s .end
+        move.l (a0)+,d0
+        cmp.l #-1,d0
+        beq.s .end
+        moveq #$3f,d7
+        and.w d0,d7
+        cmpa.w d7,a2
+        bne.s .scan
+        move.w d0,d1
+        asr.w #7,d1
+        move.w d1,d7
+        sub.w d5,d7
+        bpl.s .dy
+        neg.w d7
+.dy:    cmp.w snap_reach_y(a4),d7
+        bhi.s .scan
+        swap d0
+        lea snap_rows(a4),a3
+        btst #14,d0
+        beq.s .upright
+        addq.l #6,a3
+.upright:
+        and.w #$1fff,d0
+        move.w d0,d7
+        sub.w d4,d7
+        bpl.s .dx
+        neg.w d7
+.dx:    cmp.w snap_reach_x(a4),d7
+        bhi.s .scan
+        bsr.s snap_near
+        bra.s .scan
+.end:   rts
+
+; A0: three row offsets to fill, the step down from a neighbour's corner to
+; the new corner beside, below and above it. D0/D1: the neighbour's opaque
+; rows, D6/D7: the new one's. A0 returns past them.
+snap_offsets:
+        move.w d0,(a0)                  ; beside: tops level
+        sub.w d6,(a0)+
+        move.w d1,(a0)                  ; below: its top at the bottom
+        sub.w d6,(a0)+
+        move.w d0,(a0)                  ; above: its bottom at the top
+        sub.w d7,(a0)+
+        rts
+
+; Snap: D0/D1 top left corner of a neighbour of the same kind, A3 its row
+; offsets (snap_offsets); D2/D3 half the size, D4/D5 the wanted top left
+; corner, D6 the distance of the best position so far (start with -1). The
+; new one may join the neighbour at the right or left (snap_vw apart, rows by
+; the first offset) or below or above it (left edges level). Keep the nearest
+; of these within half the size of the wanted corner in snap_x/snap_y.
+; Clobbers D0, D1, D7.
+snap_near:
+        sub.w d4,d0
+        neg.w d0                        ; wanted - neighbour: x
+        sub.w d5,d1
+        neg.w d1                        ; and y
+        movem.w d0-d1,-(sp)
+        sub.w (a3),d1                   ; beside it: are the rows near?
+        move.w d1,d7
+        bpl.s .beside
+        neg.w d7
+.beside:
+        cmp.w d3,d7
+        bhi.s .ends
+        sub.w snap_vw(a4),d0            ; right
+        bsr.s snap_cand
+        add.w snap_vw(a4),d0
+        add.w snap_vw(a4),d0            ; left
+        bsr.s snap_cand
+.ends:  movem.w (sp),d0-d1              ; below or above it: is the column near?
+        move.w d0,d7
+        bpl.s .column
+        neg.w d7
+.column:
+        cmp.w d2,d7
+        bhi.s .done
+        sub.w 2(a3),d1                  ; below
+        bsr.s snap_cand
+        move.w 2(sp),d1
+        sub.w 4(a3),d1                  ; above
+        bsr.s snap_cand
+.done:  addq.l #4,sp
+        rts
+
+; D0/D1: wanted corner - candidate. Take the candidate if it is near enough
+; and nearer than the best one. Clobbers D7.
+snap_cand:
+        move.w d0,d7
+        bpl.s .x
+        neg.w d7
+.x:     cmp.w d2,d7
+        bhi.s .no
+        move.w d7,-(sp)
+        move.w d1,d7
+        bpl.s .y
+        neg.w d7
+.y:     cmp.w d3,d7
+        bhi.s .pop
+        add.w (sp),d7
+        cmp.w d6,d7
+        bhs.s .pop
+        move.w d7,d6
+        move.w d4,d7
+        sub.w d0,d7
+        move.w d7,snap_x(a4)
+        move.w d5,d7
+        sub.w d1,d7
+        move.w d7,snap_y(a4)
+.pop:   addq.l #2,sp
+.no:    rts
+
+; D0: snap_key of the mask A0 of D2 x D3 pixels. Set up snap_xs..snap_ye,
+; computing them only for another mask than last time, snap_vw and the reach:
+; a candidate lies at most one size away from its neighbour and must be within
+; half a size of the wanted corner.
+snap_bounds:
+        move.l d0,-(sp)
+        cmp.w snap_key(a4),d0
+        beq.s .known
+        move.w d0,snap_key(a4)
+        bsr.s mask_bounds
+.known: move.w snap_xe(a4),d0
+        sub.w snap_xs(a4),d0
+        move.w d0,snap_vw(a4)
+        move.w d2,d0
+        lsr.w #1,d0
+        add.w d2,d0
+        move.w d0,snap_reach_x(a4)
+        move.w d3,d0
+        lsr.w #1,d0
+        add.w d3,d0
+        move.w d0,snap_reach_y(a4)
+        move.l (sp)+,d0
+        rts
+
+; A0: a one-plane mask of D2 x D3 pixels, D2 / 8 bytes per row. Store its
+; opaque columns snap_xs..snap_xe and rows snap_ys..snap_ye (ends exclusive),
+; or the whole rectangle when it is empty.
+mask_bounds:
+        movem.l d0-d7/a0-a1,-(sp)
+        move.w d2,d4
+        lsr.w #3,d4                     ; bytes per row
+        move.w d2,d5                    ; leftmost opaque column
+        moveq #0,d6                     ; after the rightmost one
+        move.w d3,snap_ys(a4)
+        clr.w snap_ye(a4)
+        moveq #0,d7                     ; row
+.row:   cmp.w d3,d7
+        bhs.s .rows
+        moveq #0,d1
+        movea.l a0,a1
+.left:  move.b (a1)+,d0
+        bne.s .first
+        addq.w #1,d1
+        cmp.w d4,d1
+        blo.s .left
+        bra.s .next                     ; an empty row
+.first: lsl.w #3,d1
+.lbit:  add.b d0,d0
+        bcs.s .lx
+        addq.w #1,d1
+        bra.s .lbit
+.lx:    cmp.w d5,d1
+        bhs.s .right
+        move.w d1,d5
+.right: move.w d4,d1
+        lea 0(a0,d4.w),a1
+.rbyte: subq.w #1,d1
+        move.b -(a1),d0
+        beq.s .rbyte
+        lsl.w #3,d1
+        addq.w #8,d1
+.rbit:  lsr.b #1,d0
+        bcs.s .rx
+        subq.w #1,d1
+        bra.s .rbit
+.rx:    cmp.w d6,d1
+        bls.s .top
+        move.w d1,d6
+.top:   cmp.w snap_ys(a4),d7
+        bhs.s .bottom
+        move.w d7,snap_ys(a4)
+.bottom:
+        move.w d7,d0
+        addq.w #1,d0
+        move.w d0,snap_ye(a4)
+.next:  adda.w d4,a0
+        addq.w #1,d7
+        bra.s .row
+.rows:  cmp.w d5,d6
+        bhi.s .store
+        moveq #0,d5                     ; empty: the whole rectangle
+        move.w d2,d6
+        clr.w snap_ys(a4)
+        move.w d3,snap_ye(a4)
+.store: move.w d5,snap_xs(a4)
+        move.w d6,snap_xe(a4)
+        movem.l (sp)+,d0-d7/a0-a1
+        rts
+
 ; Size and graphics of the selected piece, from the level's style data.
 descriptor:
         movea.l $fc(a5),a0
@@ -551,20 +947,12 @@ descriptor:
         rts
 
 ; Gameplay input hook: skip the game's mouse and keyboard actions while the
-; editor is open, and ignore mouse buttons still held when it closes.
+; editor is open.
 actions:
         lea state(pc),a0
         tst.b active(a0)
         bne.s .skip
-        tst.b suppress_mouse(a0)
-        beq.s .mouse
-        btst #6,$bfe001
-        beq.s .keyboard
-        btst #2,$16(a6)
-        beq.s .keyboard
-        clr.b suppress_mouse(a0)
-.mouse: jsr $b4a
-.keyboard:
+        jsr $b4a
         jsr $14e2
 .skip:  jmp $688
 
@@ -582,16 +970,32 @@ overlay:
         bne.s .wait
         bsr coordinates
         bsr descriptor
-        cmpi.w #160,$9dac
+        move.b edit_mode(a4),d0
+        beq.s .brush
+        subq.b #2,d0
+        bmi.s .steel
+        bne.s .status                   ; parameters: no preview
+        bsr object_draw
+        bra.s .status
+.steel: bsr steel_draw
+        bra.s .status
+.brush: cmpi.w #160,$9dac
         bhs.s .status
-        move.w $9daa,d0
-        add.w #16,d0
-        move.w $9dac,d1
+        bsr brush_snap
+        move.w brush_x(a4),d0           ; into the back buffer
+        sub.w $9da8,d0
+        move.w brush_y(a4),d1
+        subq.w #4,d1
         moveq #1,d2
         bsr composite
 .status:
+        tst.b status_dirty(a4)
+        beq.s .values
+        bsr status_full
+        bra.s .shown
+.values:
         bsr status_values
-        addq.l #1,render_count(a4)
+.shown:
         jsr $1898
 .done:  movem.l (sp)+,d0-d7/a0-a6
         jmp $690
@@ -607,7 +1011,10 @@ overlay:
 ; spans two destination bytes. Destination clipping is byte-granular because
 ; both surfaces' visible limits are byte aligned (world 0..1631, viewport
 ; 16..335). Positive mode replaces masked pixels with the image planes;
-; negative mode clears masked pixels in all four planes. A5/A6 are preserved.
+; negative mode clears masked pixels in all four planes; behind mode, as the
+; game's own drawing, adds the image only where the destination's fourth
+; plane (solid terrain) is clear. Every piece's image lies inside its mask.
+; A5/A6 are preserved.
 composite:
         move.w d2,mode(a4)
         move.w width(a4),d3
@@ -683,9 +1090,11 @@ composite:
         and.w #$ff00,d0
 .low_in:
         tst.w d0
-        beq.s .next_byte
+        beq .next_byte
         movea.l a0,a3
         moveq #3,d4
+        tst.b behind(a4)
+        bne .behind
         tst.b negative(a4)
         bne.s .erase
         movea.l a2,a6
@@ -710,7 +1119,7 @@ composite:
         adda.l d2,a6
         adda.l a5,a3
         dbra d4,.plane
-        bra.s .next_byte
+        bra .next_byte
 .erase: move.w d0,d1
         not.w d1                ; D1 = bits to keep in bytes q and q+1
         move.w d1,d3
@@ -726,6 +1135,42 @@ composite:
 .erase_next:
         adda.l a5,a3
         dbra d4,.erase_plane
+        bra.s .next_byte
+.behind:
+        movea.l a0,a6                   ; the destination's fourth plane is
+        adda.l a5,a6                    ; its solid terrain
+        adda.l a5,a6
+        adda.l a5,a6
+        moveq #0,d1
+        cmp.w #$00ff,d0                 ; only read clipped-in bytes
+        bls.s .solid_low
+        move.b (a6),d1
+        lsl.w #8,d1
+.solid_low:
+        tst.b d0
+        beq.s .solid
+        move.b 1(a6),d1
+.solid: not.w d1
+        and.w d1,d0                     ; D0 = mask bits over no solid terrain
+        beq.s .next_byte
+        movea.l a2,a6
+.behind_plane:
+        moveq #0,d1
+        move.b (a6),d1
+        lsl.w d5,d1
+        and.w d0,d1
+        move.w d1,d3
+        lsr.w #8,d3
+        beq.s .behind_low
+        or.b d3,(a3)
+.behind_low:
+        tst.b d1
+        beq.s .behind_next
+        or.b d1,1(a3)
+.behind_next:
+        adda.l d2,a6
+        adda.l a5,a3
+        dbra d4,.behind_plane
 .next_byte:
         addq.l #1,a2
         addq.l #1,a0
@@ -757,80 +1202,51 @@ hide_status:
         move.l #$fffffffe,$8670
         rts
 
-; Six 80-character rows in the existing 640x48 hires bitmap. Four aligned
-; 20-character columns, a spacer and a footer. Glyphs use 8x8 cells.
-; A3 is the text-row base and D4 the horizontal pixel offset.
+; Six 80-character rows in the existing 640x48 hires bitmap: four aligned
+; 20-character columns, the room row and a footer with the level title and the
+; credit. Glyphs use 8x8 cells. A3 is the text-row base and D4 the horizontal
+; pixel offset. The layout of each mode is in params.s (custom_status).
 ;
-; status_full draws everything once when the editor opens: labels, title and
-; the values that cannot change while editing. status_values then redraws only
-; the brush fields whose value differs from what is on screen. Every field is
-; a fixed-width run of whole cells and glyph overwrites complete cells, so no
-; clearing is needed for an update.
+; status_full draws the labels and values; with status_dirty 1 it overwrites
+; them without clearing first, which changed values need (every field is a
+; fixed-width run of whole cells, and a glyph overwrites its complete cell),
+; so the block does not flicker. status_values then redraws only the brush
+; fields whose value differs from what is on screen.
 status_full:
+        move.b status_dirty(a4),d0
+        clr.b status_dirty(a4)
+        cmp.b #1,d0
+        beq custom_status
         lea CHIP_TEXT,a0
         move.w #TEXT_BYTES/4-1,d0
 .clear: clr.l (a0)+
         dbra d0,.clear
-        lea labels(pc),a2
-        lea CHIP_TEXT,a3
-        moveq #5,d7
-.line:  moveq #0,d4
-        moveq #79,d6
-.char:  moveq #0,d0
-        move.b (a2)+,d0
-        cmp.b #' ',d0
-        beq.s .blank            ; the bitmap is already clear
-        bsr glyph
-.blank: addq.w #8,d4
-        dbra d6,.char
-        lea 640(a3),a3
-        dbra d7,.line
-        lea CHIP_TEXT+2*640,a3
-        move.w #12*8,d4
-        move.w $42(a5),d0
-        addq.w #1,d0
-        bsr number
-        lea CHIP_TEXT+3*640,a3
-        move.w #12*8,d4
-        move.w $c5c0,d0
-        addq.w #1,d0
-        bsr number
-        lea CHIP_TEXT+1*640,a3
-        move.w #32*8,d4
-        move.w piece_count(a4),d0
-        bsr number
-        lea CHIP_TEXT+3*640,a3
-        move.w #32*8,d4
-        move.w $c5c2,d0
-        bsr number
-        lea CHIP_TEXT+0*640,a3
-        move.w #52*8,d4
-        move.w $c5a8,d0
-        bsr number
-        lea CHIP_TEXT+1*640,a3
-        move.w #52*8,d4
-        move.w $c5aa,d0
-        bsr number
-        lea CHIP_TEXT+2*640,a3
-        move.w #52*8,d4
-        move.w $c5ac,d0
-        bsr number
+        bra custom_status
+
+; The level title in the footer, after the snap field.
+status_title:
         lea $cd86,a2
         lea CHIP_TEXT+5*640,a3
-        moveq #0,d4
+        move.w #17*8,d4
         moveq #31,d6
 .title: moveq #0,d0
         move.b (a2)+,d0
         bsr glyph
         addq.w #8,d4
         dbra d6,.title
+        rts
+
+status_force:
         moveq #-1,d0            ; force every brush field to be drawn:
         move.w d0,shown_x(a4)   ; -1 and 1 are never valid field values
         move.w d0,shown_y(a4)
         move.w d0,shown_piece(a4)
         move.w d0,shown_remaining(a4)
         move.w #$0101,shown_sign(a4)
+        move.b #1,shown_snap(a4)
 status_values:
+        cmp.b #3,edit_mode(a4)          ; the parameters use the first column
+        beq .remaining
         move.w brush_x(a4),d0
         cmp.w shown_x(a4),d0
         beq.s .y
@@ -845,25 +1261,39 @@ status_values:
         lea CHIP_TEXT+1*640,a3
         move.w #12*8,d4
         bsr number
-.piece: move.w piece_id(a4),d0
+.piece: tst.b edit_mode(a4)          ; brush fields only with the brush
+        bne .remaining
+        move.w piece_id(a4),d0
         cmp.w shown_piece(a4),d0
         beq.s .sign
         move.w d0,shown_piece(a4)
         lea CHIP_TEXT+0*640,a3
         move.w #32*8,d4
         bsr number
-.sign:  move.b negative(a4),d0
+.sign:  move.b negative(a4),d0          ; 0 add, -1 erase, 2 behind
+        tst.b behind(a4)
+        beq.s .sign_state
+        moveq #2,d0
+.sign_state:
         cmp.b shown_sign(a4),d0
         beq.s .flip
         move.b d0,shown_sign(a4)
         lea CHIP_TEXT+2*640,a3
         move.w #32*8,d4
-        moveq #'+',d0
-        tst.b negative(a4)
-        beq.s .draw_sign
-        moveq #'-',d0
-.draw_sign:
+        lea brush_add(pc),a2
+        tst.b d0
+        beq.s .brush_text
+        lea brush_erase(pc),a2
+        bmi.s .brush_text
+        lea brush_behind(pc),a2
+.brush_text:
+        moveq #5,d6
+.brush_char:
+        moveq #0,d0
+        move.b (a2)+,d0
         bsr glyph
+        addq.w #8,d4
+        dbra d6,.brush_char
 .flip:  move.b flipped(a4),d0
         cmp.b shown_flip(a4),d0
         beq.s .remaining
@@ -883,6 +1313,29 @@ status_values:
         addq.w #8,d4
         dbra d6,.flip_text
 .remaining:
+        move.b edit_mode(a4),d0         ; snap with the brush and the objects
+        beq.s .snap
+        cmp.b #2,d0
+        bne.s .room_left
+.snap:  move.b snap(a4),d0
+        cmp.b shown_snap(a4),d0
+        beq.s .room_left
+        move.b d0,shown_snap(a4)
+        lea CHIP_TEXT+5*640,a3
+        move.w #12*8,d4
+        lea flip_off(pc),a2
+        tst.b d0
+        beq.s .snap_state
+        lea flip_on(pc),a2
+.snap_state:
+        moveq #2,d6
+.snap_text:
+        moveq #0,d0
+        move.b (a2)+,d0
+        bsr glyph
+        addq.w #8,d4
+        dbra d6,.snap_text
+.room_left:
         move.w remaining(a4),d0
         cmp.w shown_remaining(a4),d0
         beq.s .done
@@ -965,15 +1418,10 @@ copper_end:
 ground_name: dc.b 'Ground1',0
 flip_off: dc.b 'Off'
 flip_on: dc.b 'On '
+brush_add: dc.b '+     '
+brush_erase: dc.b '-     '
+brush_behind: dc.b 'Behind'
 full_text: dc.b 'Full'
-labels:
-        dc.b 'X Coord             Piece               Lemmings            LMB: Place          '
-        dc.b 'Y Coord             Piece Types         To Save             RMB: Add/Erase      '
-        dc.b 'Level               Brush               Minutes             Left/Right: Piece   '
-        dc.b 'Ground              Special             Flip                F: Flip   E: Resume '
-        dc.b 'Room                                                        S: Save   L: Load   '
-        dc.b '                                                  Editor V1.2.1 by Timo Heimonen'
-        even
 
 ; Original 5x7 ASCII bitmap font, authored for the editor.
 ; Seven rows per glyph; the low five bits run left to right.
@@ -1075,19 +1523,21 @@ font_source:
         dc.b $00,$00,$09,$16,$00,$00,$00 ; $7e ~
         even
 
-        include "save_load.s"
-        include "menu.s"
-
-; The code from here to image_end is stored separately, as the Editor2 file on
-; disk 1. The bootstrap loads it before the game asks for disk 2 and unpacks it
-; directly behind the first part, so the image in memory is contiguous.
         even
-editor2_start:
+
+; The image is stored packed in the file Editor on disk 1, behind the boot
+; loader; the bootstrap unpacks it into the reserved block.
         ifnd WHDLOAD
         include "disk_codec.s"
         endif
         include "disk_io.s"
-        include "disk_index.s"
+        include "menu.s"
+        include "title.s"
+        include "levels.s"
+        include "level_save.s"
+        include "steel.s"
+        include "objects.s"
+        include "params.s"
 
 ; Runtime storage follows the file image in the reserved editor block.
 ; The installer clears it before publishing any hooks.
@@ -1095,6 +1545,13 @@ image_end:
 state           equ image_end
 placements      equ state+STATE_SIZE
 font            equ placements+MAX_PLACEMENTS*4
-load_record     equ font+760
-save_record     equ load_record+2048
-storage_end     equ save_record+2048
+save_record     equ font+760
+level_slots     equ save_record+2048 ; occupied level disk slots in order
+level_status    equ level_slots+318*2
+level_titles    equ level_status+320
+list_text       equ level_titles+318*32
+list_path       equ list_text+600   ; WHDLoad: Levels/ and a file name
+custom_record   equ list_path+40    ; the custom level being played
+title_buf       equ custom_record+2048 ; 32 characters, NUL, and a spare NUL
+custom_file     equ title_buf+34    ; WHDLoad: the file name of the edited level
+storage_end     equ custom_file+32

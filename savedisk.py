@@ -1,12 +1,11 @@
 #!/usr/bin/env python3
-# Lemmings In-Game Level Editor V1.2.1
+# Lemmings In-Game Level Editor V2.0
 # Copyright (c) 2026 Timo Heimonen <timo.heimonen@proton.me>
 # Licensed under the MIT License. See the LICENSE file for details.
-"""Create and exchange editor save disks without distributing game data."""
+"""Create level disks and exchange custom levels without distributing game data."""
 from __future__ import annotations
 
 import argparse
-from collections import Counter
 from dataclasses import dataclass
 import json
 import os
@@ -20,21 +19,12 @@ SECTOR_SIZE = 512
 TRACK_SIZE = 11 * SECTOR_SIZE
 TRACK_COUNT = 160
 DISK_SIZE = TRACK_COUNT * TRACK_SIZE
-SLOT_SIZE = 2048
 SLOTS_PER_TRACK = 2
 SLOT_COUNT = (TRACK_COUNT - 1) * SLOTS_PER_TRACK
 HEADER_SIZE = 64
-INDEX_ENTRY_SIZE = 3
-INDEX_SIZE = SLOT_COUNT * INDEX_ENTRY_SIZE
-INDEX_END = HEADER_SIZE + INDEX_SIZE
-FORMAT_VERSION = 1
-COMPATIBILITY = 0x00010001
-LEVEL_COUNT = 120
-PER_LEVEL = 32
-MAX_EDITS = 400
 DISK_MAGIC = b'LEMSAVE\0'
-SAVE_MAGIC = b'LEMEDIT\0'
-CATALOG = Path(__file__).with_name('bases.json')
+SAVE_FORMAT = 1                         # a V1.x editor's save disk
+CATALOG = Path(__file__).with_name('styles.json')
 
 
 def crc(data: bytes) -> int:
@@ -55,233 +45,295 @@ def check_crc(data: bytes) -> None:
         raise ValueError('Checksum mismatch')
 
 
-def base_catalog() -> List[Dict]:
-    catalog = json.loads(CATALOG.read_text())
-    if catalog['compatibility'] != COMPATIBILITY or len(catalog['levels']) != LEVEL_COUNT:
-        raise ValueError('Incompatible base-level catalog')
-    return catalog['levels']
+# Level disk, disk format version 2: complete custom levels in the game's own
+# 2048-byte level record. Format version 1 is the save disk of the V1.x
+# editor, which this version does not use.
+LEVEL_FORMAT = 2
+LEVEL_COMPATIBILITY = 0x00020001
+LEVEL_SIZE = 2048
+LEVEL_SLOT_SIZE = TRACK_SIZE // SLOTS_PER_TRACK
+LEVEL_ENTRY_SIZE = 2
+LEVEL_INDEX_SIZE = SLOT_COUNT * LEVEL_ENTRY_SIZE
+LEVEL_INDEX_END = HEADER_SIZE + LEVEL_INDEX_SIZE
+# The V1.x editor's save menu refuses a disk with the game disks' first
+# directory name at $400 of track 0 as a game disk instead of offering to
+# initialize it.
+GUARD_OFFSET = 0x400
+GUARD = b'Reserved'
+STYLE_COUNT = 5
+TERRAIN_END = b'\xff' * 4
+OBJECT_FLAGS = (0x000f, 0x400f, 0x800f, 0xc00f)
+# The game draws terrain pieces until the end marker, without a count limit,
+# so a playable record keeps at least one marker: at most 399 pieces.
+MAX_PIECES = 399
+MAX_LEMMINGS = 160                      # lemming records up to the object instances
+MAX_SCROLL = 1280                       # the view scrolls in steps of 4 up to 1280
+ENTRANCE = 1                            # object type of an entrance, in every style
+MARKER = 2                              # the two-player exit marker, in every style
+MAX_ENTRANCES = 4                       # the game's entrance table
+TRIGGER_SLOTS = 16                      # objects with a trigger area in the grid
+GRID_WIDTH = 408                        # attribute grid, cells of 4 x 4 pixels
+GRID_HEIGHT = 42
+
+
+def style_catalog() -> List[Dict]:
+    styles = json.loads(CATALOG.read_text())
+    if len(styles) != STYLE_COUNT:
+        raise ValueError('Incompatible style catalog')
+    return styles
+
+
+def check_record(record: bytes, styles: List[Dict]) -> None:
+    """Reject level records the Amiga game cannot play safely.
+
+    The limits are the game's own: its lemming records, entrance table,
+    attribute grid (408 x 42 cells of 4 x 4 pixels, written without clipping
+    by steel areas and the trigger boxes of the first 16 objects), scrolling
+    range, terrain end marker, one-digit time and two-digit counters.
+    """
+    if len(record) != LEVEL_SIZE:
+        raise ValueError('Expected a 2048-byte level record')
+    rate, lemmings, required, minutes, *skills = struct.unpack_from('>12H', record)
+    start_x, style, special, unused = struct.unpack_from('>4H', record, 0x18)
+    if not (rate <= 99 and 1 <= lemmings <= MAX_LEMMINGS and required <= lemmings
+            and 1 <= minutes <= 9 and max(skills) <= 99):
+        raise ValueError('Level parameter out of range')
+    if start_x > MAX_SCROLL or start_x % 4:
+        raise ValueError('Start position must be a multiple of 4 up to 1280')
+    if style >= STYLE_COUNT or special > 4 or unused:
+        raise ValueError('Invalid graphics style or special background')
+    entrances = 0
+    for slot in range(32):
+        x, y, kind, flags = struct.unpack_from('>hhHH', record, 0x20 + slot * 8)
+        if not x:
+            continue
+        if kind >= styles[style]['object_count'] or flags not in OBJECT_FLAGS:
+            raise ValueError(f'Object {slot + 1}: invalid type or flags')
+        entrances += kind == ENTRANCE
+        if slot < TRIGGER_SLOTS:
+            tx, ty, tw, th = styles[style]['triggers'][kind]
+            if (x < 0 or y < 0 or (x >> 2) + tx + tw > GRID_WIDTH
+                    or (y >> 2) + ty + th > GRID_HEIGHT):
+                raise ValueError(f'Object {slot + 1}: trigger area outside the level')
+    if entrances > MAX_ENTRANCES:
+        raise ValueError(f'More than {MAX_ENTRANCES} entrances')
+    terrain = [record[offset:offset + 4] for offset in range(0x120, 0x760, 4)]
+    if TERRAIN_END not in terrain[:MAX_PIECES + 1]:
+        raise ValueError(f'More than {MAX_PIECES} terrain pieces')
+    count = terrain.index(TERRAIN_END)
+    if any(entry != TERRAIN_END for entry in terrain[count:]):
+        raise ValueError('Terrain entries after the end marker')
+    if special and count:
+        raise ValueError('A special background level has no terrain pieces')
+    for number, entry in enumerate(terrain[:count]):
+        if entry[3] & 0x3f >= styles[style]['piece_count']:
+            raise ValueError(f'Terrain piece {number + 1}: invalid piece')
+    for number in range(32):
+        high, low = struct.unpack_from('>HH', record, 0x760 + number * 4)
+        if (high or low) and ((high >> 7) + ((low >> 12) & 15) + 1 > GRID_WIDTH
+                              or (high & 127) + ((low >> 8) & 15) + 1 > GRID_HEIGHT - 1):
+            raise ValueError(f'Steel area {number + 1}: outside the level')
+    title = record[0x7e0:]
+    if any(not 32 <= c <= 126 for c in title) or not title.strip():
+        raise ValueError('Title must be 32 printable ASCII characters, not all spaces')
+
+
+def two_player(record: bytes, styles: List[Dict]) -> bool:
+    """Whether a checked record is valid for the game's two-player mode.
+
+    It needs an entrance, the marker (the first object of type 2) and exits of
+    both players. A lemming at x, y in an exit counts for the green player
+    when |x - 8 - marker x| + |y - 32 - marker y| <= 32, otherwise for the
+    blue player; an exit is the green player's when the nearest point of its
+    trigger area is that near. Only the first 16 slots have trigger areas.
+    """
+    style = struct.unpack_from('>H', record, 0x1a)[0]
+    objects = [struct.unpack_from('>hhHH', record, 0x20 + slot * 8) for slot in range(32)]
+    marker = next(((x, y) for x, y, kind, _ in objects if x and kind == MARKER), None)
+    if marker is None or not any(x and kind == ENTRANCE for x, _, kind, _ in objects):
+        return False
+    point = (marker[0] + 8, marker[1] + 32)
+    owners = set()
+    for x, y, kind, _ in objects[:TRIGGER_SLOTS]:
+        if not x or kind not in styles[style]['exits']:
+            continue
+        tx, ty, tw, th = styles[style]['triggers'][kind]
+        near = 0
+        for start, size, centre in ((((x >> 2) + tx) * 4, tw * 4, point[0]),
+                                    (((y >> 2) + ty) * 4, th * 4, point[1])):
+            near += max(start - centre, centre - (start + size - 1), 0)
+        owners.add('green' if near <= 32 else 'blue')
+    return owners == {'blue', 'green'}
 
 
 @dataclass(frozen=True)
-class Save:
-    level: int
-    base_crc: int
-    name: str
-    placements: bytes
+class Level:
+    """A custom level: the 2048-byte record exactly as the Amiga game plays it."""
+    record: bytes
 
     @property
-    def count(self) -> int:
-        return len(self.placements) // 4
+    def title(self) -> str:
+        return self.record[0x7e0:].decode('ascii').rstrip()
 
-    def validate(self, bases: List[Dict]) -> None:
-        if not 0 <= self.level < LEVEL_COUNT:
-            raise ValueError('Invalid single-player level')
-        base = bases[self.level]
-        if self.base_crc != int(base['crc32'], 16):
-            raise ValueError('Base-level checksum mismatch')
-        if not 1 <= len(self.name) <= 16 or any(not 32 <= ord(c) <= 126 for c in self.name):
-            raise ValueError('Name must contain 1..16 printable ASCII characters')
-        if not self.name.strip():
-            raise ValueError('Name must not be blank')
-        if len(self.placements) % 4 or self.count + base['original_count'] > MAX_EDITS:
-            raise ValueError('Placement capacity exceeded or invalid record length')
-        for high, low in struct.iter_unpack('>HH', self.placements):
-            if high & 0x8000 or low & 0x40 or (low & 0x3f) >= base['piece_count']:
-                raise ValueError('Invalid placement flags or piece ID')
+    @property
+    def style(self) -> int:
+        return struct.unpack_from('>H', self.record, 0x1a)[0]
 
-    def encode(self, bases: List[Dict], *, padded: bool = False) -> bytes:
-        self.validate(bases)
-        data = bytearray(SLOT_SIZE if padded else HEADER_SIZE + len(self.placements))
-        struct.pack_into('>8sHHIHHI', data, 0, SAVE_MAGIC, FORMAT_VERSION,
-                         HEADER_SIZE, COMPATIBILITY, self.level, self.count, self.base_crc)
-        data[24:40] = self.name.encode('ascii').ljust(16, b'\0')
-        data[64:64 + len(self.placements)] = self.placements
-        # Slot and export use the same checksum over the used prefix only.
-        used = seal(data[:64 + len(self.placements)])
-        data[:len(used)] = used
-        return bytes(data)
+    def validate(self, styles: List[Dict]) -> None:
+        check_record(self.record, styles)
+
+    def encode(self, styles: List[Dict]) -> bytes:
+        """Return the complete disk slot: the record and zero padding."""
+        self.validate(styles)
+        return self.record + bytes(LEVEL_SLOT_SIZE - LEVEL_SIZE)
 
     @classmethod
-    def decode(cls, data: bytes, bases: List[Dict], *, padded: bool = False) -> Save:
-        if len(data) < HEADER_SIZE:
-            raise ValueError('Truncated save')
-        magic, version, header, compat, level, count, base = struct.unpack_from('>8sHHIHHI', data)
-        if (magic, version, header, compat) != (SAVE_MAGIC, FORMAT_VERSION, HEADER_SIZE, COMPATIBILITY):
-            raise ValueError('Unsupported save format or editor compatibility')
-        used = HEADER_SIZE + count * 4
-        if count > MAX_EDITS or len(data) != (SLOT_SIZE if padded else used) or used > len(data):
-            raise ValueError('Invalid save length or placement count')
-        if any(data[40:60]) or any(data[used:]):
-            raise ValueError('Nonzero reserved save bytes')
-        check_crc(data[:used])
-        raw_name = data[24:40]
-        name = raw_name.split(b'\0', 1)[0]
-        if raw_name != name.ljust(16, b'\0'):
-            raise ValueError('Invalid name padding')
-        try:
-            result = cls(level, base, name.decode('ascii'), data[64:used])
-        except UnicodeDecodeError as error:
-            raise ValueError('Invalid save name') from error
-        result.validate(bases)
+    def decode(cls, data: bytes, styles: List[Dict]) -> Level:
+        if len(data) != LEVEL_SLOT_SIZE:
+            raise ValueError('Invalid level slot length')
+        if any(data[LEVEL_SIZE:]):
+            raise ValueError('Nonzero padding after the level record')
+        result = cls(bytes(data[:LEVEL_SIZE]))
+        result.validate(styles)
         return result
 
 
-def new_disk() -> bytes:
+def check_level_disk(data: bytes) -> None:
+    """Refuse anything but a level disk before reading it as one; a V1.x save
+    disk is named, so it is never taken for a damaged level disk."""
+    if len(data) != DISK_SIZE:
+        raise ValueError('Expected a standard 901120-byte ADF')
+    version = struct.unpack_from('>H', data, 8)[0]
+    if data[:8] == DISK_MAGIC and version == SAVE_FORMAT:
+        raise ValueError('This is a save disk of the V1.x editor, not a level disk; '
+                         'use the savedisk.py of the V1.x editor for it')
+    if data[:8] != DISK_MAGIC or version != LEVEL_FORMAT:
+        raise ValueError('Not a level disk (header mismatch)')
+
+
+def new_level_disk() -> bytes:
     data = bytearray(DISK_SIZE)
-    struct.pack_into('>8sHHIHHHHHH', data, 0, DISK_MAGIC, FORMAT_VERSION,
-                     HEADER_SIZE, COMPATIBILITY, SECTOR_SIZE, 11, TRACK_COUNT,
-                     SLOT_SIZE, SLOT_COUNT, PER_LEVEL)
-    struct.pack_into('>HH', data, 28, INDEX_ENTRY_SIZE, INDEX_SIZE)
-    data[HEADER_SIZE:INDEX_END] = b'\xff\0\0' * SLOT_COUNT
-    seal_index(data)
+    struct.pack_into('>8sHHIHHHHHHHH', data, 0, DISK_MAGIC, LEVEL_FORMAT, HEADER_SIZE,
+                     LEVEL_COMPATIBILITY, SECTOR_SIZE, 11, TRACK_COUNT, LEVEL_SLOT_SIZE,
+                     SLOT_COUNT, LEVEL_SIZE, LEVEL_ENTRY_SIZE, LEVEL_INDEX_SIZE)
+    data[GUARD_OFFSET:GUARD_OFFSET + len(GUARD)] = GUARD
+    seal_level_index(data)
     return bytes(data)
 
 
-def seal_index(data: bytearray) -> None:
-    struct.pack_into('>I', data, 32, crc(data[HEADER_SIZE:INDEX_END]))
+def seal_level_index(data: bytearray) -> None:
+    struct.pack_into('>I', data, 32, crc(data[HEADER_SIZE:LEVEL_INDEX_END]))
     data[:HEADER_SIZE] = seal(data[:HEADER_SIZE])
 
 
-def read_header(data: bytes, *, check_index: bool = True) -> List[Tuple[int, int]]:
+def read_level_header(data: bytes, *, check_index: bool = True) -> List[Tuple[int, int]]:
     """Require supported identity even during index recovery."""
     if len(data) != DISK_SIZE:
         raise ValueError('Expected a standard 901120-byte ADF')
-    if data[:32] != new_disk()[:32] or any(data[36:60]) or any(data[INDEX_END:TRACK_SIZE]):
-        raise ValueError('Not a supported save disk (header mismatch)')
+    guard_end = GUARD_OFFSET + len(GUARD)
+    if (data[:32] != new_level_disk()[:32] or any(data[36:60])
+            or any(data[LEVEL_INDEX_END:GUARD_OFFSET]) or data[GUARD_OFFSET:guard_end] != GUARD
+            or any(data[guard_end:TRACK_SIZE])):
+        raise ValueError('Not a supported level disk (header mismatch)')
     check_crc(data[:HEADER_SIZE])
-    entries = list(struct.iter_unpack('>BH', data[HEADER_SIZE:INDEX_END]))
+    entries = list(struct.iter_unpack('>BB', data[HEADER_SIZE:LEVEL_INDEX_END]))
     if check_index:
-        if crc(data[HEADER_SIZE:INDEX_END]) != struct.unpack_from('>I', data, 32)[0]:
+        if crc(data[HEADER_SIZE:LEVEL_INDEX_END]) != struct.unpack_from('>I', data, 32)[0]:
             raise ValueError('Index checksum mismatch; use rebuild-index')
-        for level, count in entries:
-            if not (level == 255 and count == 0 or level < LEVEL_COUNT and count <= MAX_EDITS):
+        for state, style in entries:
+            if not ((state, style) == (0, 0) or state in (1, 2) and style < STYLE_COUNT):
                 raise ValueError('Invalid slot index entry; use rebuild-index')
-        if any(n > PER_LEVEL for n in Counter(level for level, _ in entries if level != 255).values()):
-            raise ValueError('Index has more than 32 saves for one level; use rebuild-index')
     return entries
 
 
-def scan_slots(data: bytes, bases: List[Dict]) -> List[Optional[Save]]:
-    """Validate every physical slot, independently of the allocation index."""
-    for track in range(1, TRACK_COUNT):
-        start = track * TRACK_SIZE + SLOTS_PER_TRACK * SLOT_SIZE
-        if any(data[start:(track + 1) * TRACK_SIZE]):
-            raise ValueError(f'Nonzero reserved sectors on track {track}')
-    saves = []
+def level_slot_offset(index: int) -> int:
+    if not 0 <= index < SLOT_COUNT:
+        raise ValueError(f'Slot must be in 1..{SLOT_COUNT}')
+    return (1 + index // SLOTS_PER_TRACK) * TRACK_SIZE + (index % SLOTS_PER_TRACK) * LEVEL_SLOT_SIZE
+
+
+def scan_levels(data: bytes, styles: List[Dict]) -> List[Optional[Level]]:
+    """Validate every physical slot, independently of the index."""
+    levels = []
     for index in range(SLOT_COUNT):
-        offset = slot_offset(index)
-        raw = data[offset:offset + SLOT_SIZE]
+        offset = level_slot_offset(index)
+        raw = data[offset:offset + LEVEL_SLOT_SIZE]
         try:
-            saves.append(Save.decode(raw, bases, padded=True) if any(raw) else None)
+            levels.append(Level.decode(raw, styles) if any(raw) else None)
         except ValueError as error:
             raise ValueError(f'Slot {index + 1}: {error}') from error
-    if any(n > PER_LEVEL for n in Counter(s.level for s in saves if s is not None).values()):
-        raise ValueError('More than 32 saves for one level')
-    return saves
+    return levels
 
 
-def index_entry(save: Optional[Save]) -> Tuple[int, int]:
-    return (255, 0) if save is None else (save.level, save.count)
+def level_entry(level: Optional[Level], styles: List[Dict]) -> Tuple[int, int]:
+    """Index entry: state 0 empty, 1 a level, 2 a level valid for two players;
+    the graphics style."""
+    if level is None:
+        return (0, 0)
+    return (2 if two_player(level.record, styles) else 1, level.style)
 
 
-def set_index_entry(data: bytearray, slot: int, save: Optional[Save]) -> None:
-    struct.pack_into('>BH', data, HEADER_SIZE + slot * INDEX_ENTRY_SIZE, *index_entry(save))
+def set_level_entry(data: bytearray, slot: int, level: Optional[Level],
+                    styles: List[Dict]) -> None:
+    struct.pack_into('>BB', data, HEADER_SIZE + slot * LEVEL_ENTRY_SIZE,
+                     *level_entry(level, styles))
 
 
-def read_disk(data: bytes, bases: List[Dict]) -> List[Optional[Save]]:
-    entries = read_header(data)
-    saves = scan_slots(data, bases)
-    for slot, (entry, save) in enumerate(zip(entries, saves)):
-        if entry != index_entry(save):
+def read_level_disk(data: bytes, styles: List[Dict]) -> List[Optional[Level]]:
+    entries = read_level_header(data)
+    levels = scan_levels(data, styles)
+    for slot, (entry, level) in enumerate(zip(entries, levels)):
+        if entry != level_entry(level, styles):
             raise ValueError(f'Slot {slot + 1}: index mismatch; use rebuild-index')
-    return saves
+    return levels
 
 
-def rebuild_index(data: bytes, bases: List[Dict]) -> bytes:
-    """Repair only the index after a complete, successful physical-slot scan."""
-    read_header(data, check_index=False)
-    saves = scan_slots(data, bases)
+def rebuild_level_index(data: bytes, styles: List[Dict]) -> bytes:
+    read_level_header(data, check_index=False)
+    levels = scan_levels(data, styles)
     result = bytearray(data)
-    for slot, save in enumerate(saves):
-        set_index_entry(result, slot, save)
-    seal_index(result)
+    for slot, level in enumerate(levels):
+        set_level_entry(result, slot, level, styles)
+    seal_level_index(result)
     return bytes(result)
 
 
-def slot_offset(index: int) -> int:
-    if not 0 <= index < SLOT_COUNT:
-        raise ValueError(f'Slot must be in 1..{SLOT_COUNT}')
-    return (1 + index // SLOTS_PER_TRACK) * TRACK_SIZE + (index % SLOTS_PER_TRACK) * SLOT_SIZE
-
-
-def choose_slot(saves: List[Optional[Save]], level: int) -> int:
-    """Pick a free slot so that a level's saves share as few tracks as possible.
-
-    The two slots of a track are 2t and 2t+1. Prefer the free partner of a slot
-    that already holds this level, then a slot on a completely free track, then
-    any free slot. The menu reads one track per pair, so pairing halves the
-    number of tracks it has to read for a level.
-    """
-    free = [i for i, entry in enumerate(saves) if entry is None]
-    if not free:
-        raise ValueError('Save disk full')
-    for i in free:
-        partner = saves[i ^ 1]
-        if partner is not None and partner.level == level:
-            return i
-    for i in free:
-        if saves[i ^ 1] is None:
-            return i
-    return free[0]
-
-
-def import_save(data: bytes, save: Save, bases: List[Dict], *, slot: Optional[int] = None,
-                replace: bool = False) -> Tuple[bytes, int]:
-    saves = read_disk(data, bases)
-    encoded = save.encode(bases, padded=True)
+def import_level(data: bytes, level: Level, styles: List[Dict], *, slot: Optional[int] = None,
+                 replace: bool = False) -> Tuple[bytes, int]:
+    """Store a level in the given slot or the lowest free one."""
+    levels = read_level_disk(data, styles)
+    encoded = level.encode(styles)
     if slot is None:
-        slot = choose_slot(saves, save.level)
-    offset = slot_offset(slot)
-    if saves[slot] is not None and not replace:
+        if None not in levels:
+            raise ValueError('Level disk full')
+        slot = levels.index(None)
+    offset = level_slot_offset(slot)
+    if levels[slot] is not None and not replace:
         raise ValueError('Slot occupied; use --replace to overwrite')
-    if saves[slot] is not None and saves[slot].level != save.level:
-        raise ValueError('Cannot overwrite a different level')
-    count = sum(s is not None and s.level == save.level for i, s in enumerate(saves) if i != slot)
-    if count >= PER_LEVEL:
-        raise ValueError('This level already has 32 saves')
     result = bytearray(data)
-    result[offset:offset + SLOT_SIZE] = encoded
-    set_index_entry(result, slot, save)
-    seal_index(result)
+    result[offset:offset + LEVEL_SLOT_SIZE] = encoded
+    set_level_entry(result, slot, level, styles)
+    seal_level_index(result)
     return bytes(result), slot
 
 
-def delete_save(data: bytes, slot: int, bases: List[Dict], *, force: bool = False) -> bytes:
-    """Clear one slot using the same validation as batch deletion."""
-    return delete_saves(data, [slot], bases, force=force)
-
-
-def delete_saves(data: bytes, slots: List[int], bases: List[Dict], *, force: bool = False) -> bytes:
+def delete_levels(data: bytes, slots: List[int], styles: List[Dict], *, force: bool = False) -> bytes:
     """Clear selected slots together, then validate the complete prospective disk."""
     if not slots:
         raise ValueError('Select at least one slot')
-    targets = [(slot, slot_offset(slot)) for slot in dict.fromkeys(slots)]
-    if len(data) != DISK_SIZE:
-        raise ValueError('Expected a standard 901120-byte ADF')
+    targets = [(slot, level_slot_offset(slot)) for slot in dict.fromkeys(slots)]
     if not force:
-        read_disk(data, bases)
+        read_level_disk(data, styles)
     else:
-        read_header(data)
+        read_level_header(data)
     result = bytearray(data)
     for slot, offset in targets:
-        if not any(data[offset:offset + SLOT_SIZE]):
+        if not any(data[offset:offset + LEVEL_SLOT_SIZE]):
             raise ValueError('Slot is empty')
-        result[offset:offset + SLOT_SIZE] = bytes(SLOT_SIZE)
-        set_index_entry(result, slot, None)
-    # Validate once after clearing every target so damaged slots cannot block
-    # each other's recovery. All bytes outside the selected slots still validate.
-    seal_index(result)
-    read_disk(bytes(result), bases)
+        result[offset:offset + LEVEL_SLOT_SIZE] = bytes(LEVEL_SLOT_SIZE)
+        set_level_entry(result, slot, None, styles)
+    seal_level_index(result)
+    read_level_disk(bytes(result), styles)
     return bytes(result)
 
 
@@ -292,13 +344,14 @@ def write_new(path: Path, data: bytes) -> None:
 
 
 def replace_disk(path: Path, before: bytes, after: bytes) -> None:
-    # Only a validated save disk reaches this function. Preserve file permissions
-    # and replace atomically so a failed host write leaves the previous disk intact.
+    # Only a validated level disk reaches this function. Preserve file
+    # permissions and replace atomically so a failed host write leaves the
+    # previous disk intact.
     if path.is_symlink() or not path.is_file():
         raise ValueError('Disk must be a regular file, not a symbolic link')
     mode = path.stat().st_mode & 0o777
     if not mode & 0o222:
-        raise ValueError('Save disk is write-protected')
+        raise ValueError('Level disk is write-protected')
     temp = None
     try:
         with tempfile.NamedTemporaryFile(dir=path.parent, prefix='.savedisk-', delete=False) as output:
@@ -318,21 +371,20 @@ def replace_disk(path: Path, before: bytes, after: bytes) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest='command', required=True)
-    create = sub.add_parser('create', help='Create a new empty save ADF; never overwrite')
+    create = sub.add_parser('create', help='Create a new empty level disk ADF; never overwrite')
     create.add_argument('disk', type=Path)
-    listing = sub.add_parser('list', help='Validate and list saves')
+    listing = sub.add_parser('list', help='Validate and list the levels')
     listing.add_argument('disk', type=Path)
-    listing.add_argument('--level', type=int, choices=range(LEVEL_COUNT), metavar='0..119')
-    export = sub.add_parser('export', help='Export a physical slot to a new .lemsave file')
+    export = sub.add_parser('export', help='Export a slot to a new .lvl file')
     export.add_argument('disk', type=Path)
     export.add_argument('slot', type=int)
     export.add_argument('output', type=Path)
-    importing = sub.add_parser('import', help='Import a compatible .lemsave file')
+    importing = sub.add_parser('import', help='Import a .lvl level record')
     importing.add_argument('disk', type=Path)
-    importing.add_argument('save', type=Path)
-    importing.add_argument('--slot', type=int, help='Physical slot 1..318; default: paired allocation')
+    importing.add_argument('level', type=Path, metavar='file')
+    importing.add_argument('--slot', type=int, help='Slot 1..318; default: the lowest free one')
     importing.add_argument('--replace', action='store_true')
-    delete = sub.add_parser('delete', help='Delete saves and free their slots together')
+    delete = sub.add_parser('delete', help='Delete levels and free their slots together')
     delete.add_argument('disk', type=Path)
     delete.add_argument('slots', type=int, nargs='+', metavar='SLOT')
     delete.add_argument('--yes', action='store_true', help='Confirm deletion')
@@ -343,44 +395,50 @@ def main() -> None:
     args = parser.parse_args()
     try:
         if args.command == 'create':
-            write_new(args.disk, new_disk())
-            print(f'Created {SLOT_COUNT} empty slots')
+            write_new(args.disk, new_level_disk())
+            print(f'Created {SLOT_COUNT} empty level slots')
             return
-        bases = base_catalog()
         data = args.disk.read_bytes()
-        if args.command == 'rebuild-index':
-            replace_disk(args.disk, data, rebuild_index(data, bases))
-            print('Rebuilt slot index')
-            return
-        if args.command == 'delete':
-            if not args.yes:
-                raise ValueError('Deletion requires --yes')
-            after = delete_saves(data, [slot - 1 for slot in args.slots], bases, force=args.force)
-            replace_disk(args.disk, data, after)
-            return
-        saves = read_disk(data, bases)
-        if args.command == 'list':
-            for i, save in enumerate(saves):
-                if save is not None and (args.level is None or save.level == args.level):
-                    print(f'{i + 1:3}  level {save.level:3}  {save.name:16}  {save.count:3} edits')
-            print(f'{saves.count(None)}/{SLOT_COUNT} free slots')
-        elif args.command == 'export':
-            slot_offset(args.slot - 1)
-            save = saves[args.slot - 1]
-            if save is None:
-                raise ValueError('Slot is empty')
-            write_new(args.output, save.encode(bases))
-        elif args.command == 'import':
-            if args.replace and args.slot is None:
-                raise ValueError('--replace requires --slot')
-            save = Save.decode(args.save.read_bytes(), bases)
-            after, slot = import_save(data, save, bases,
-                                      slot=None if args.slot is None else args.slot - 1,
-                                      replace=args.replace)
-            replace_disk(args.disk, data, after)
-            print(f'Imported into slot {slot + 1}')
+        check_level_disk(data)
+        level_command(args, data)
     except (OSError, ValueError, KeyError) as error:
         parser.exit(2, f'Error: {error}\n')
+
+
+def level_command(args: argparse.Namespace, data: bytes) -> None:
+    styles = style_catalog()
+    if args.command == 'rebuild-index':
+        replace_disk(args.disk, data, rebuild_level_index(data, styles))
+        print('Rebuilt slot index')
+        return
+    if args.command == 'delete':
+        if not args.yes:
+            raise ValueError('Deletion requires --yes')
+        after = delete_levels(data, [slot - 1 for slot in args.slots], styles, force=args.force)
+        replace_disk(args.disk, data, after)
+        return
+    levels = read_level_disk(data, styles)
+    if args.command == 'list':
+        for i, level in enumerate(levels):
+            if level is not None:
+                players = '2P' if two_player(level.record, styles) else '  '
+                print(f'{i + 1:3}  style {level.style}  {players}  {level.title}')
+        print(f'{levels.count(None)}/{SLOT_COUNT} free slots')
+    elif args.command == 'export':
+        level_slot_offset(args.slot - 1)
+        level = levels[args.slot - 1]
+        if level is None:
+            raise ValueError('Slot is empty')
+        write_new(args.output, level.record)
+    elif args.command == 'import':
+        if args.replace and args.slot is None:
+            raise ValueError('--replace requires --slot')
+        level = Level(args.level.read_bytes())
+        after, slot = import_level(data, level, styles,
+                                   slot=None if args.slot is None else args.slot - 1,
+                                   replace=args.replace)
+        replace_disk(args.disk, data, after)
+        print(f'Imported into slot {slot + 1}')
 
 
 if __name__ == '__main__':

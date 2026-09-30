@@ -1,4 +1,4 @@
-; Lemmings In-Game Level Editor V1.2.1
+; Lemmings In-Game Level Editor V2.0
 ; Copyright (c) 2026 Timo Heimonen <timo.heimonen@proton.me>
 ; Licensed under the MIT License. See the LICENSE file for details.
 ;
@@ -15,21 +15,18 @@
         include "whdload_api.i"
 
 BASEMEM         equ $80000
-GAME_MEM        equ $80000              ; the game's file cache and the editor
-SAVE_DISK_SIZE  equ 901120              ; the editor's save disk image buffer
-EXPMEM_SIZE     equ GAME_MEM+SAVE_DISK_SIZE
+EXPMEM_SIZE     equ $80000              ; the game's file cache and the editor
 DIRECTORY       equ $70000              ; disk 1 directory, only during start-up
 CODE_BASE       equ $400
-; The top 16 bytes of the game's part of the expansion memory hold the
-; mailbox for the editor: 'WHDL', the resload base, the address of the save
-; disk image buffer (directly behind the mailbox) and the image state.
-MAILBOX_SIZE    equ 16
+; The top 8 bytes of the expansion memory hold the mailbox for the editor:
+; 'WHDL' and the resload base.
+MAILBOX_SIZE    equ 8
 
         ifnd CODE_SIZE
         fail "CODE_SIZE (length of the patched Code file) must be defined"
         endif
-        ifnd EDITOR2_SIZE
-        fail "EDITOR2_SIZE (length of the WHDLoad build's Editor2 file) must be defined"
+        ifnd EDITOR_SIZE
+        fail "EDITOR_SIZE (length of the WHDLoad build's Editor file) must be defined"
         endif
 
 ;============================================================================
@@ -38,7 +35,7 @@ base:
         moveq #-1,d0                    ; ws_Security
         rts
         dc.b "WHDLOADS"                 ; ws_ID
-        dc.w 10                         ; ws_Version
+        dc.w 17                         ; ws_Version: resload_ListFiles into ExpMem
         dc.w WHDLF_NoError|WHDLF_EmulTrap|WHDLF_ClearMem
         dc.l BASEMEM                    ; ws_BaseMemSize
         dc.l 0                          ; ws_ExecInstall
@@ -53,10 +50,14 @@ expmem:
         dc.w name-base                  ; ws_name
         dc.w copy-base                  ; ws_copy
         dc.w info-base                  ; ws_info
+        dc.w 0                          ; ws_kickname: no kickstart image
+        dc.l 0                          ; ws_kicksize
+        dc.w 0                          ; ws_kickcrc
+        dc.w 0                          ; ws_config
 
 name:   dc.b "Lemmings",0
 copy:   dc.b "1991 DMA Design / Psygnosis",0
-info:   dc.b "In-Game Level Editor V1.2.1",10
+info:   dc.b "In-Game Level Editor V2.0",10
         dc.b "by Timo Heimonen",0
         even
 
@@ -71,10 +72,10 @@ start:
         move.l a0,(a1)
         movea.l a0,a2
 
-        ; Read the disk 1 directory. The install must be the disk images
+        ; Read the disk 1 directory. The install must be the disk 1 image
         ; patched with this version's WHDLoad editor: "Code" with its
-        ; bootstrap and "Editor2" must have exactly the lengths of that build.
-        ; Floppy editor builds and other versions differ at least in Editor2.
+        ; bootstrap and "Editor" must have exactly the lengths of that build.
+        ; Floppy editor builds and other versions differ at least in Editor.
         move.l #$400,d0
         move.l #$1000,d1
         moveq #1,d2
@@ -84,20 +85,22 @@ start:
         move.l #$1600,d3                ; first file's disk offset
         moveq #0,d4                     ; offset of Code
         moveq #0,d5                     ; length of Code
-        moveq #0,d6                     ; length of Editor2
+        moveq #0,d6                     ; length of Editor
 .find:  cmpi.l #-1,(a1)
         beq.s .end
         cmpi.l #'Code',(a1)
-        bne.s .editor2
+        bne.s .editor
         tst.b 4(a1)
         bne.s .next
         move.l d3,d4
         move.l 12(a1),d5
         bra.s .next
-.editor2:
+.editor:
         cmpi.l #'Edit',(a1)
         bne.s .next
-        cmpi.l #'or2'<<8,4(a1)
+        cmpi.w #'or',4(a1)
+        bne.s .next
+        tst.b 6(a1)
         bne.s .next
         move.l 12(a1),d6
 .next:  add.l 12(a1),d3
@@ -105,7 +108,7 @@ start:
         bra.s .find
 .end:   cmp.l #CODE_SIZE,d5
         bne wrong_version
-        cmp.l #EDITOR2_SIZE,d6
+        cmp.l #EDITOR_SIZE,d6
         bne wrong_version
         move.l d5,d1
         move.l d4,d0
@@ -140,14 +143,11 @@ start:
         ; at $8 ($38FE); the editor reserves the top of it.
         move.l expmem(pc),d0
         move.l d0,($4).w
-        move.l #GAME_MEM-MAILBOX_SIZE,($8).w
+        move.l #EXPMEM_SIZE-MAILBOX_SIZE,($8).w
         movea.l d0,a0
-        adda.l #GAME_MEM-MAILBOX_SIZE,a0
+        adda.l #EXPMEM_SIZE-MAILBOX_SIZE,a0
         move.l #'WHDL',(a0)+
-        move.l a2,(a0)+
-        lea 8(a0),a1
-        move.l a1,(a0)+
-        clr.l (a0)
+        move.l a2,(a0)
 
         jsr resload_FlushCache(a2)
         jmp (CODE_BASE).l

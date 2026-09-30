@@ -1,5 +1,47 @@
 # Changelog
 
+## V2.0
+
+Version 2 is a separate line: custom levels instead of editing the original
+ones. V1.x continues on the `v1-maint` branch.
+
+- CUSTOM on the title screen, after MAYHEM. 1 Player lists the custom
+  levels and plays them through the game's own level start, briefing and
+  result screens; New Level starts a new level in one of the five graphics
+  styles.
+- Two players: 2 Player in CUSTOM lists the levels made for two players
+  (an entrance, exits and the marker object beside the green player's exit)
+  and plays them in the game's own two-player mode, one level per match. In
+  the editor `M` puts the marker at an exit and the status block shows
+  whether the level is for two players; New Level has templates for two
+  players.
+- The editor opens a custom level paused at its start and edits everything
+  a level holds: terrain pieces (add, erase, flip, behind), steel areas,
+  objects (entrances, exits, traps, decorations, with their drawing modes),
+  the parameters (release rate, lemmings, to save, time, skills, start
+  position) and the title, within the game's own limits.
+- `E` test plays the current edits from the start and returns to the editor.
+- `G` snap joins new and moved pieces and objects to the nearest one of the
+  same kind, by their visible edges.
+- Esc leaves the editor for the list and asks first when the level has
+  unsaved changes.
+- Levels are saved on a level disk (318 levels) on floppy and as `.lvl`
+  files in the directory `Levels` under WHDLoad. A `.lvl` file is the
+  game's 2048-byte level record and can be shared freely.
+- `savedisk.py` creates level disks, lists and checks them, and imports,
+  exports and deletes levels (`.lvl`); `styles.json` holds the limits of the
+  five styles.
+- Only disk 1 is patched: the whole editor is one file on tracks 151..159,
+  behind the boot loader. Disk 2 stays unchanged. With one drive the list
+  asks for disk 2 before a level starts and before it returns to the title
+  screen, because the game reads its files from whichever disk is in the
+  drive.
+- Removed: the in-level editor for the original levels, its save/load menu
+  and save disk support (they remain in V1.x). A V1.x save disk is
+  recognised and never written to.
+
+The entries below are the V1.x line.
+
 ## V1.2.1
 
 - The WHDLoad slave accepts only the disk images written with it by

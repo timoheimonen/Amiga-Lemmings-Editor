@@ -4,13 +4,14 @@ What the slave changes in the game's main program `Code` after loading it to
 `$400`. Addresses are runtime addresses.
 
 The slave accepts only the disk images of its own build: in the disk 1
-directory, `Code` (the game program with the editor's bootstrap) and `Editor2`
-(the WHDLoad editor's disk code) must have exactly the lengths of that build,
+directory, `Code` (the game program with the editor's bootstrap) and `Editor`
+(the packed WHDLoad editor) must have exactly the lengths of that build,
 and the first long word of every patch site is checked before it is changed.
 Anything else, including the floppy version's disk images, ends with
-WHDLoad's "wrong version" requester. The slave and its `Disk.1` and `Disk.2`
-therefore always come from the same `patch.py --whdload` run. The editor's own patch points are the same as on floppy
-(see the main documentation).
+WHDLoad's "wrong version" requester. The slave and its `Disk.1` therefore
+always come from the same `patch.py --whdload` run; `Disk.2` is the unchanged
+disk 2. The editor's own patch points are the same as on floppy (see the main
+documentation).
 
 ## Start-up
 
@@ -47,17 +48,19 @@ keyboard itself.
 
 ## Slave settings
 
-- `ws_Version` 10; flags `NoError` (a failing resload call ends WHDLoad with
-  a requester), `EmulTrap` (the game's `TRAP #1` when the VBR is moved) and
-  `ClearMem`.
-- BaseMem `$80000`, ExpMem `$80000` + 901120 bytes.
+- `ws_Version` 17 (`resload_ListFiles` for the custom levels writes into
+  ExpMem, which needs WHDLoad 16.9), the version 16 and 17 fields zero;
+  flags `NoError` (a failing resload call ends WHDLoad with a requester),
+  `EmulTrap` (the game's `TRAP #1` when the VBR is moved) and `ClearMem`.
+- BaseMem `$80000`, ExpMem `$80000`.
 
 ## Editor
 
 The editor on the WHDLoad disk images is assembled with `WHDLOAD` defined:
 
-- `src/editor/disk_io.s` includes `src/disk_file.s` instead of its floppy
-  hardware routines; the MFM codec is left out. The checks and the update
-  order of the save disk (data track before the index track) are unchanged.
-- The save/load menu skips drive detection and disk prompts, offers to create
-  a missing save disk file and shows "Save disk file" instead of a drive.
+- The editor's `disk_io.s` includes `src/disk_file.s` (the mailbox with the
+  resload base) instead of the floppy disk transport; the MFM codec is left
+  out.
+- The custom levels are the `.lvl` files of `Levels`, listed with
+  `resload_ListFiles`, read with `resload_LoadFile` and written with
+  `resload_SaveFile`; there are no drive searches or disk prompts.

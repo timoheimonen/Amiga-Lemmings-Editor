@@ -1,10 +1,9 @@
-; Lemmings In-Game Level Editor V1.2.1
+; Lemmings In-Game Level Editor V2.0
 ; Copyright (c) 2026 Timo Heimonen <timo.heimonen@proton.me>
 ; Licensed under the MIT License. See the LICENSE file for details.
 ;
 ; CPU-only Amiga DD track codec. Buffers must be word-aligned and disjoint.
 ; These routines neither access disk hardware nor authorize a disk write.
-TRACK_BYTES     equ 11*512
 MFM_SECTOR      equ 1088
 MFM_WRITE_BYTES equ 12668
 MFM_READ_BYTES  equ $3600
