@@ -1,12 +1,13 @@
-; Lemmings In-Game Level Editor V1.2.1
+; Lemmings In-Game Level Editor V2.0
 ; Copyright (c) 2026 Timo Heimonen <timo.heimonen@proton.me>
 ; Licensed under the MIT License. See the LICENSE file for details.
 ;
-; Synchronous PAL disk transport, called from the paused editor's main task.
-; Interrupts remain enabled. The non-displayed viewport is borrowed until the
-; call returns; no drawing or buffer swap may run inside a transport call.
-; All public calls preserve every register except D0/CCR. A5 is game globals.
-; With WHDLOAD defined, the hardware routines are replaced by disk_file.s.
+; Synchronous PAL disk transport for the level disk, called from the paused
+; editor's main task or from the custom level list on the title screen.
+; Interrupts remain enabled. In a level the non-displayed viewport is borrowed
+; until the call returns; no drawing or buffer swap may run inside a transport
+; call. All public calls preserve every register except D0/CCR. A5 is game
+; globals. The WHDLoad version has no disks; it uses disk_file.s instead.
 DISK_REFUSED    equ -1
 DISK_CANCELLED  equ -2
 DISK_NO_MEDIA   equ -3
@@ -17,6 +18,11 @@ DISK_CHANGED    equ -7
 DISK_DAMAGED    equ -8
 DISK_INDEX      equ -9
 DISK_INDEX_WRITE equ -10
+RAW_TITLE       equ $58800            ; the game's raw track buffer, idle on the title screen
+
+        ifd WHDLOAD
+        include "disk_file.s"
+        else
 
 ; D0: drive 0..3, D1: track 0..159. Output: DISK_TRACK, cleared on failure.
 ; Reads do not establish permission for a later write.
@@ -49,143 +55,6 @@ disk_read_track:
 .done:  movem.l (sp)+,d1-d7/a0-a6
         rts
 
-; D0: drive 0..3, D1: slot 0..317. DISK_TRACK holds the caller's most recent
-; image of the target track; save_record holds a valid current-level record
-; or an all-zero deletion. The caller obtains any required confirmation.
-; Fresh header/target reads, index agreement and per-level limits are checked.
-; Refuse a changed track, invalid current-level target or invalid replacement.
-; A data write failure returns DISK_DAMAGED: BOTH slots may be damaged. Once
-; that track is verified, an index-update failure returns DISK_INDEX_WRITE.
-; Success requires full read-back comparison of both the data and index tracks.
-disk_replace_slot:
-        movem.l d1-d7/a0-a6,-(sp)
-        lea state(pc),a4
-        cmp.l #318,d1
-        bhs .refuse
-        move.l d1,d7
-        move.l d0,d6
-        lea save_record(pc),a0
-        bsr disk_valid_slot
-        tst.l d0
-        bne .refuse
-        move.l d6,d0
-        bsr disk_acquire
-        tst.l d0
-        bne .done
-        bsr disk_select
-        tst.l d0
-        bne .release
-        lea install(pc),a1
-        adda.l #DISK_HEADER,a1
-        moveq #0,d0
-        bsr disk_read_decoded
-        tst.l d0
-        bne .release
-        movea.l a1,a0
-        bsr validate_disk_header
-        tst.l d0
-        bne .release
-        lea install(pc),a1
-        adda.l #DISK_VERIFY,a1
-        move.l d7,d0
-        lsr.w #1,d0
-        addq.w #1,d0
-        bsr disk_read_decoded
-        tst.l d0
-        bne .release
-        lea install(pc),a0
-        adda.l #DISK_TRACK,a0
-        bsr disk_compare
-        bne .changed
-        moveq #0,d0
-        move.w disk_track_no(a4),d0
-        bsr disk_check_index_track
-        tst.l d0
-        bne .release
-        ; Count every other current-level entry before adding a replacement.
-        lea save_record(pc),a2
-        tst.l (a2)
-        beq.s .capacity_ok
-        lea install(pc),a2
-        adda.l #DISK_HEADER+64,a2
-        moveq #0,d3
-        moveq #0,d4
-.count: cmp.w d7,d3
-        beq.s .next
-        move.b (a2),d0
-        cmp.b level_id+1(a4),d0
-        bne.s .next
-        addq.w #1,d4
-.next:  addq.l #3,a2
-        addq.w #1,d3
-        cmp.w #318,d3
-        blo.s .count
-        cmp.w #32,d4
-        bhs .refuse_release
-.capacity_ok:
-        move.l d7,d0
-        and.w #1,d0
-        mulu #2048,d0
-        adda.w d0,a0
-        bsr disk_valid_slot
-        tst.l d0
-        bne .refuse_release
-        movea.l a0,a2
-        lea save_record(pc),a0
-        move.w #511,d1
-.copy:  move.l (a0)+,(a2)+
-        dbra d1,.copy
-        lea install(pc),a0
-        adda.l #DISK_TRACK,a0
-        bsr disk_write_decoded
-        tst.l d0
-        bne .release
-        ; The data track is durable before the index is changed. Re-read
-        ; track zero and refuse any changed snapshot before updating it.
-        lea install(pc),a1
-        adda.l #DISK_VERIFY,a1
-        moveq #0,d0
-        bsr disk_read_decoded
-        tst.l d0
-        bne.s .index_failed
-        lea install(pc),a0
-        adda.l #DISK_HEADER,a0
-        bsr disk_compare
-        bne.s .index_failed
-        movea.l a0,a2
-        move.l d7,d0
-        mulu #3,d0
-        lea 64(a2,d0.w),a2
-        lea save_record(pc),a0
-        bsr disk_slot_entry
-        move.b d0,2(a2)
-        lsr.l #8,d0
-        move.b d0,1(a2)
-        lsr.l #8,d0
-        move.b d0,(a2)
-        lea install(pc),a0
-        adda.l #DISK_HEADER,a0
-        bsr seal_disk_index
-        bsr disk_write_decoded
-        tst.l d0
-        beq.s .release
-.index_failed:
-        moveq #DISK_INDEX_WRITE,d0
-        bra.s .release
-.changed:
-        moveq #DISK_CHANGED,d0
-        bra.s .release
-.refuse_release:
-        moveq #DISK_REFUSED,d0
-.release:
-        bsr disk_release
-        bra.s .done
-.refuse:
-        moveq #DISK_REFUSED,d0
-.done:  movem.l (sp)+,d1-d7/a0-a6
-        rts
-
-        ifnd WHDLOAD
 ; Internal whole-track commit. A0: desired image of the already-read track
 ; at disk_track_no. The caller establishes identity, validation and permission.
 ; Retain drive/buffer ownership and defer cancellation through verification.
@@ -239,23 +108,6 @@ disk_write_decoded:
         moveq #DISK_DAMAGED,d0
 .done:  movem.l (sp)+,d1-d7/a0-a3
         rts
-        endif
-
-; Accept an empty slot or a fully valid record for the active level. A0 and
-; every register except D0/CCR are preserved by validate_record as well.
-disk_valid_slot:
-        movem.l d1/a1,-(sp)
-        movea.l a0,a1
-        move.w #511,d1
-.empty: tst.l (a1)+
-        bne.s .record
-        dbra d1,.empty
-        moveq #0,d0
-        bra.s .done
-.record:
-        bsr validate_record
-.done:  movem.l (sp)+,d1/a1
-        rts
 
 ; Return comparison flags without changing A0/A1.
 disk_compare:
@@ -266,24 +118,24 @@ disk_compare:
         movem.l (sp)+,d1/a0-a1
         rts
 
-        ifd WHDLOAD
-        include "disk_file.s"
-        else
-; Validate ownership before touching hardware. The two known viewport bases
-; must form a back/front pair. Wait a full PAL field for the copper pointer
-; update to take effect, and drain any outstanding blit before borrowing.
+; Validate ownership before touching hardware. In a level, the two known
+; viewport bases must form a back/front pair and the back buffer is borrowed;
+; on the title screen (title_disk) the game's idle raw track buffer is used.
+; Wait a full PAL field for the copper pointer update to take effect, and
+; drain any outstanding blit before borrowing.
 disk_acquire:
         cmp.l #4,d0
         bhs .bad
         tst.b disk_busy(a4)
         bne .bad
+        move.l #RAW_TITLE,d1
+        tst.b title_disk(a4)
+        bne.s .idle
         tst.b active(a4)
         beq .bad
         tst.b $39(a5)
         beq .bad
         tst.b $30(a5)
-        bne .bad
-        tst.b load_pending(a4)
         bne .bad
         move.l $cc(a5),d1
         move.l #$2bd42,d2
@@ -294,7 +146,7 @@ disk_acquire:
         bne .bad
 .front: cmp.l $d0(a5),d2
         bne .bad
-        move.b $bfd100,d2
+.idle:  move.b $bfd100,d2
         and.b #$78,d2
         cmp.b #$78,d2
         bne .bad                  ; native loader must already be idle
