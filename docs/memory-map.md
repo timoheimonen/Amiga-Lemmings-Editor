@@ -10,7 +10,7 @@ it is not fixed.
 
 | Offset | Size | Contents |
 | --- | --- | --- |
-| `+$0000` | < `$B000` | Editor image (position independent) followed by its zero-initialized state: the edited level record, placements, font, list of custom levels |
+| `+$0000` | < `$B000` | Editor image (position independent) followed by its zero-initialized state: the edited level record, placements, font, list of custom levels, undo history |
 | `+$B000` | | Staging area: the packed `Editor` is loaded here during start-up and unpacked to `+$0000` |
 | `+$B000` | up to 42200 bytes | Afterwards: the unpacked `GroundN` terrain graphics of the level being edited |
 | `+$15800..+$199FF` | 3 x 5632 bytes | Floppy: decoded disk tracks (the track read or to be written, the read-back of a write, the level disk's track 0) |

@@ -1,4 +1,4 @@
-; Lemmings In-Game Level Editor V2.0
+; Lemmings In-Game Level Editor V2.1
 ; Copyright (c) 2026 Timo Heimonen <timo.heimonen@proton.me>
 ; Licensed under the MIT License. See the LICENSE file for details.
 ;
@@ -207,6 +207,7 @@ list_start:
         endif
         st custom_play(a4)
         st list_played(a4)
+        bsr undo_clear                  ; a history per opened level
         clr.b edit_mode(a4)             ; the editor starts with the terrain
         clr.w obj_type(a4)
         move.w #$000f,obj_flags(a4)

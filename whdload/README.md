@@ -27,14 +27,14 @@ It contains:
 | `Lemmings.slave` | The WHDLoad slave |
 | `Disk.1` | Disk 1, patched with the WHDLoad version of the editor |
 | `Disk.2` | Disk 2, unchanged |
-| `Lemmings.info` | Workbench icon: default tool `WHDLoad`, tool types `SLAVE=Lemmings.slave`, `PRELOAD`, and the disabled `(NOWRITECACHE)` and `(WRITEDELAY=25)` |
+| `Lemmings.info` | Workbench icon: default tool `WHDLoad`, tool types `SLAVE=Lemmings.slave`, `PRELOAD`, `NOWRITECACHE` and the disabled `(WRITEDELAY=25)` |
 | `Levels` | Directory for custom levels (`.lvl` files); keep it, even when empty |
 
 Double-click the icon, or from a shell:
 
 ```sh
 cd Games/Lemmings
-WHDLoad Lemmings.slave PRELOAD
+WHDLoad Lemmings.slave PRELOAD NOWRITECACHE
 ```
 
 **F10** quits back to Workbench (WHDLoad's `QuitKey` option changes it).
@@ -54,24 +54,36 @@ styles, for one or for two players.
 
 The editor opens at the start of the level. E test plays the level from its
 start and returns to the editor; T, O and P switch between the terrain, steel
-areas, objects and parameters; N changes the title and S saves the level into
+areas, objects and parameters; the right button switches the terrain brush
+between adding and erasing, and with Shift held while erasing the left button
+deletes the outlined piece; U undoes the last edit and Shift+U redoes it
+(three steps); N changes the title and S saves the level into
 its file (a new level as the first free `LevelNNN.lvl`). The status block
 below the panel shows the keys of each mode.
 
 ## Saving levels
 
-By default WHDLoad keeps written files in memory and writes them to the hard
-disk when it quits. **Leave the game with the quit key** before switching off
-or resetting, or the levels saved in the session are lost.
+The icon's `NOWRITECACHE` tool type makes WHDLoad write every saved level to
+the hard disk at once. WHDLoad then waits `WRITEDELAY` (default 150, that is
+3 seconds) so the file system can finish, and the display is blanked for that
+time. When the screen comes back, the level is on the hard disk.
 
-To write every level at once instead, select the icon, choose Information from
-the Workbench menu and remove the parentheses around the tool types:
+Without `NOWRITECACHE`, for example when a launcher starts the slave without
+the icon's tool types, WHDLoad keeps written files in memory and writes them
+to the hard disk only when it quits. Then **leave the game with the quit key**
+before switching off or resetting, or the levels saved in the session are
+lost. A launcher can pass `NOWRITECACHE` itself, and `S:WHDLoad.prefs` can set
+it for all installs.
+
+To change the behaviour, select the icon, choose Information from the
+Workbench menu and edit the tool types; a tool type in parentheses is
+disabled:
 
 | Tool types | Saving | Display during a save |
 | --- | --- | --- |
-| `PRELOAD` (default) | To the hard disk when WHDLoad quits | No noticeable pause |
-| `PRELOAD` `NOWRITECACHE` | At once | Blanked for a few seconds while WHDLoad writes |
+| `PRELOAD` `NOWRITECACHE` (default) | At once | Blanked for a few seconds while WHDLoad writes |
 | `PRELOAD` `NOWRITECACHE` `WRITEDELAY=25` | At once | Blanked for a shorter time; a reset right after a save may leave the file incomplete |
+| `PRELOAD` `(NOWRITECACHE)` | To the hard disk when WHDLoad quits | No noticeable pause |
 
 `WRITEDELAY` is in 1/50 s; WHDLoad waits that long after every write so the
 file system can finish.

@@ -132,7 +132,7 @@ the steel areas or objects, as the level start does.
 | `$BFE001` bit 6 | Left mouse button (0 = pressed) |
 | `$DFF016` bit 10 (byte `$16`, bit 2) | Right mouse button (0 = pressed) |
 | Raw keys `$12`, `$14`, `$18`, `$19`, `$36`, `$21` | E, T, O, P, N, S |
-| Raw keys `$23`, `$35`, `$24` | F, B, G (no gameplay action in the original game) |
+| Raw keys `$23`, `$35`, `$24`, `$37`, `$16` | F, B, G, M, U (no gameplay action in the original game) |
 | Raw keys `$4C`..`$4F` | Cursor up, down, right, left |
 | Raw keys `$44`, `$43`, `$45`, `$41` | Return, Enter, Esc, Backspace |
 | Raw keys `$60`/`$61`, `$E0`/`$E1` | Left/right Shift down, up |

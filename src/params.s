@@ -1,4 +1,4 @@
-; Lemmings In-Game Level Editor V2.0
+; Lemmings In-Game Level Editor V2.1
 ; Copyright (c) 2026 Timo Heimonen <timo.heimonen@proton.me>
 ; Licensed under the MIT License. See the LICENSE file for details.
 ;
@@ -44,6 +44,8 @@ custom_key:
         beq.s .snap
         cmp.b #$37,d0                   ; M: the two-player marker
         beq.s .marker
+        cmp.b #$16,d0                   ; U: undo, with shift redo
+        beq.s .undo
         moveq #-1,d1
         cmp.b #KEY_UP,d0
         beq.s .select
@@ -62,6 +64,13 @@ custom_key:
 .marker:
         st pending_marker(a4)
         moveq #1,d1
+        rts
+.undo:  moveq #1,d1
+        tst.b shift(a4)
+        beq.s .undo_set
+        moveq #2,d1
+.undo_set:
+        move.b d1,pending_undo(a4)
         rts
 .select:
         add.b d1,pending_select(a4)
@@ -149,7 +158,14 @@ param_change:
 .min:   cmp.w d2,d0
         ble.s .set
         move.w d2,d0
-.set:   move.w d0,(a1)
+.set:   movem.l d0-d1/a0,-(sp)          ; changes of one parameter share an entry
+        suba.l a0,a0
+        moveq #$1a,d0
+        moveq #1,d1
+        add.b param_sel(a4),d1
+        bsr undo_record
+        movem.l (sp)+,d0-d1/a0
+        move.w d0,(a1)
         lea custom_record(pc),a1
         move.w 2(a1),d0
         cmp.w 4(a1),d0
@@ -204,6 +220,7 @@ param_table:
 ; startup counter and the view's scroll stay; the skill selection sprite stays
 ; hidden.
 level_apply:
+        bsr undo_check                  ; an edit that changed nothing
         movem.l d0-d7/a0-a6,-(sp)
         lea custom_record(pc),a0
         lea ($c5a6).l,a1
@@ -286,14 +303,24 @@ custom_leave:
         jmp $1598
 
 ; Z clear when the edited level differs from the one loaded or last saved:
-; placements not yet in custom_record, or a changed custom_record.
+; custom_record with the placements after its terrain pieces, as a save would
+; store it (built in save_record), against the CRC of the saved state.
 level_changed:
-        movem.l d0-d5/a0,-(sp)
+        movem.l d0-d5/a0-a1,-(sp)
+        lea custom_record(pc),a0
         tst.l paint_count(a4)
-        bne.s .done
-        bsr.s level_crc
+        beq.s .crc
+        lea save_record(pc),a1
+        move.w #LEVEL_SIZE/4-1,d0
+.copy:  move.l (a0)+,(a1)+
+        dbra d0,.copy
+        lea save_record(pc),a1
+        bsr.s append_placements
+        bne.s .done                     ; they do not fit: changed
+        lea save_record(pc),a0
+.crc:   bsr.s record_crc
         cmp.l saved_crc(a4),d0
-.done:  movem.l (sp)+,d0-d5/a0
+.done:  movem.l (sp)+,d0-d5/a0-a1
         rts
 
 ; Take custom_record as the level's saved state.
@@ -307,6 +334,9 @@ level_remember:
 ; D0: CRC-32 of custom_record. Clobbers D1-D5/A0.
 level_crc:
         lea custom_record(pc),a0
+
+; A0: a level record. D0: its CRC-32. Clobbers D1-D5/A0.
+record_crc:
         move.l #LEVEL_SIZE,d0
         moveq #-1,d1
         bra crc32
@@ -478,7 +508,7 @@ status_texts:
         rts
 
 status_footer:
-        dc.b 5,50,'Editor V2.0 by Timo Heimonen',0,$ff
+        dc.b 5,50,'Editor V2.1 by Timo Heimonen',0,$ff
 status_modes:
         dc.w status_terrain-status_modes,status_steel-status_modes
         dc.w status_objects-status_modes,status_none-status_modes
@@ -487,7 +517,7 @@ status_custom:
         dc.b 0,0,'X Coord',0,1,0,'Y Coord',0,2,0,'Level',0,3,0,'Ground',0
         dc.b 0,40,'Lemmings',0,1,40,'To Save',0,2,40,'Minutes',0
         dc.b 4,0,'Room',0
-        dc.b 4,20,'E: Test  T: Steel  O: Objects  P: Params  N: Title  S: Save',0
+        dc.b 4,20,'E:Test T:Steel O:Objects P:Params N:Title S:Save U:Undo',0
 status_none:
         dc.b $ff
 status_params:
@@ -496,11 +526,17 @@ status_params:
         dc.b 0,40,'Builders',0,1,40,'Bashers',0,2,40,'Miners',0,3,40,'Diggers',0
         dc.b 0,60,'Start X',0,1,60,'Shift: Steps x10',0
         dc.b 2,60,'Up/Down: Field',0,3,60,'Left/Right: Value',0
-        dc.b 4,0,'Room',0,4,20,'E: Test  P: Terrain  N: Title  S: Save',0,$ff
+        dc.b 4,0,'Room',0,4,20,'E:Test P:Terrain N:Title S:Save U:Undo',0,$ff
 status_terrain:
         dc.b 0,20,'Piece',0,1,20,'Piece Types',0,2,20,'Brush',0,3,20,'Special',0
-        dc.b 3,40,'Flip',0,0,60,'LMB: Place',0,1,60,'RMB: Add/Erase',0
+        dc.b 3,40,'Flip',0,0,60,'LMB: Place',0
         dc.b 2,60,'Left/Right: Piece',0,3,60,'F: Flip  B: Behind',0,5,0,'G: Snap',0,$ff
+; The right button's help follows the brush (status_values): Shift deletes
+; pieces only while erasing. Both texts are 20 cells wide.
+status_rmb_add:
+        dc.b 1,60,'RMB: Add/Erase      ',0,$ff
+status_rmb_erase:
+        dc.b 1,60,'RMB: Add  Shift: Del',0,$ff
 status_steel:
         dc.b 0,20,'Steel Areas',0,0,60,'LMB Drag: Add',0,1,60,'RMB: Remove',0
         dc.b 3,60,'T: Terrain',0,$ff

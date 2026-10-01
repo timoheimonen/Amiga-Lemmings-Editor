@@ -1,5 +1,25 @@
 # Changelog
 
+## V2.1
+
+- Undo and redo in the editor: `U` undoes the last edit, Shift+`U` redoes
+  it, three steps. Every kind of edit can be undone: terrain pieces, steel
+  areas, objects (including the two-player marker), the parameters and the
+  title. The history survives test plays and saving; it is cleared when
+  another level is opened.
+- Deleting whole terrain pieces: in the erasing mode, Shift held hides the
+  brush and outlines the piece under the cursor; the left button deletes it
+  and frees its place among the 399 pieces. Erasing pieces (tunnels) can be
+  deleted too, which gives the terrain back.
+- The key help of the terrain mode follows the brush: `RMB: Add/Erase`
+  while adding, `RMB: Add  Shift: Del` while erasing.
+- WHDLoad: the install's icon sets `NOWRITECACHE`, so a saved level is
+  written to the hard disk at once instead of when WHDLoad quits; the display
+  is blanked for about three seconds while WHDLoad writes. Switching off or
+  resetting without the quit key no longer loses the levels saved in the
+  session.
+- After a save, snap also finds the pieces placed before the save.
+
 ## V2.0
 
 Version 2 is a separate line: custom levels instead of editing the original

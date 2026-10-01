@@ -1,4 +1,4 @@
-; Lemmings In-Game Level Editor V2.0
+; Lemmings In-Game Level Editor V2.1
 ; Copyright (c) 2026 Timo Heimonen <timo.heimonen@proton.me>
 ; Licensed under the MIT License. See the LICENSE file for details.
 ;
@@ -129,7 +129,7 @@ level_save_go:
         tst.l d0
         beq.s .valid
         lea txt_level_invalid(pc),a0
-        bra.s level_save_message
+        bra level_save_message
 .valid: ifd WHDLOAD
         bsr menu_show_working
         bsr level_store_file
@@ -143,7 +143,18 @@ level_save_go:
 ; and the menu show.
 level_saved:
         tst.l d0
-        bne.s .error
+        bne .error
+        lea save_record+$7e0(pc),a0     ; a new title can be undone
+        lea custom_record+$7e0(pc),a1
+        moveq #31,d0
+.same:  cmpm.b (a0)+,(a1)+
+        dbne d0,.same
+        beq.s .record
+        bsr title_undo
+        bsr undo_commit
+        clr.b undo_open(a4)
+.record:
+        bsr undo_break                  ; a change after the save is a new step
         lea save_record(pc),a0
         lea custom_record(pc),a1
         move.w #LEVEL_SIZE/4-1,d0
@@ -154,6 +165,12 @@ level_saved:
         moveq #32/4-1,d0
 .title: move.l (a0)+,(a1)+
         dbra d0,.title
+        lea custom_record+$120(pc),a0   ; and its pieces, which snap and undo
+        lea ($c6c6).l,a1                ; read from the game's copy
+        move.w #$640/4-1,d0
+.pieces:
+        move.l (a0)+,(a1)+
+        dbra d0,.pieces
         or.b #1,status_dirty(a4)
         ; The placements are part of the record now.
         lea custom_record+$120(pc),a0
@@ -169,7 +186,7 @@ level_saved:
         clr.l paint_count(a4)
         bsr level_remember
         lea txt_level_saved(pc),a0
-        bra.s level_save_message
+        bra level_save_message
 .error: lea txt_level_full(pc),a0
         cmp.l #LEVEL_FULL,d0
         beq.s level_save_message
@@ -181,10 +198,21 @@ level_save_message:
 
 ; The entered title becomes the edited level's title.
 level_rename:
+        bsr.s title_undo
         lea custom_record+$7e0(pc),a1
         bsr.s level_title_to
         bsr level_apply
         bra menu_close
+
+; Take the title for undo before it changes. Preserves every register.
+title_undo:
+        movem.l d0-d1/a0,-(sp)
+        movea.w #$7e0,a0
+        moveq #32,d0
+        moveq #0,d1
+        bsr undo_record
+        movem.l (sp)+,d0-d1/a0
+        rts
 
 ; A1: 32 bytes. Store title_buf there, padded with spaces.
 level_title_to:
