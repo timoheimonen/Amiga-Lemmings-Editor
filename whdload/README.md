@@ -1,4 +1,4 @@
-# Lemmings In-Game Level Editor for WHDLoad
+# Lemmings Integrated Level Editor for WHDLoad
 
 The custom level editor, installed to a hard disk and started with
 [WHDLoad](https://www.whdload.de/). The game and the editor behave as on
