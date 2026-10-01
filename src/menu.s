@@ -1,4 +1,4 @@
-; Lemmings In-Game Level Editor V2.1
+; Lemmings In-Game Level Editor V2.1.1
 ; Copyright (c) 2026 Timo Heimonen <timo.heimonen@proton.me>
 ; Licensed under the MIT License. See the LICENSE file for details.
 ;
@@ -42,10 +42,10 @@ KEY_E           equ $12
 ; Take over the keys, the mouse buttons and the view's colours.
 menu_begin:
         move.b d0,menu_kind(a4)
+        bsr input_reset
         clr.b native_used(a4)
         clr.b key_head(a4)
         clr.b key_tail(a4)
-        clr.b shift(a4)
         ifd WHDLOAD
         st native_drive(a4)             ; no floppy drives
         else
@@ -87,12 +87,15 @@ menu_close:
         movem.l (sp)+,d0/a0-a1
         rts
 
-; Leave the menu. If a disk was taken from the drive that holds disk 2, ask
-; for disk 2 first; the game needs it for the next level.
+; Leave the menu. If the drive that holds disk 2 was found without it, or
+; disk 2 may have been taken out for the level disk, check that disk 2 is
+; back first and ask for it if not; the game needs it for the next level.
 menu_leave:
+        ifnd WHDLOAD
         tst.b native_used(a4)
-        beq.s menu_close
-        bra menu_prompt_disk2
+        bne menu_disk2_done
+        endif
+        bra.s menu_close
 
 ; ---------------------------------------------------------------------------
 ; Frame handler: consume queued keys and mouse clicks, then act.
@@ -156,14 +159,10 @@ menu_next_key:
 ; Called by the keyboard interrupt while the menu or the list is open.
 ; D0: raw code.
 menu_queue_key:
-        cmp.b #$60,d0
-        beq.s .shift
+        cmp.b #$60,d0                   ; shift: tracked by the keyboard hook
+        beq.s .done
         cmp.b #$61,d0
-        beq.s .shift
-        cmp.b #$e0,d0
-        beq.s .unshift
-        cmp.b #$e1,d0
-        beq.s .unshift
+        beq.s .done
         tst.b d0
         bmi.s .done
         movem.l d1/a0,-(sp)
@@ -178,11 +177,6 @@ menu_queue_key:
         move.b d1,key_head(a4)
 .full:  movem.l (sp)+,d1/a0
 .done:  rts
-.shift: st shift(a4)
-        rts
-.unshift:
-        clr.b shift(a4)
-        rts
 
 ; D0: raw key.
 menu_key:

@@ -1,5 +1,44 @@
 # Changelog
 
+## V2.1.1
+
+- Saving no longer writes over a level of another level disk: when the level
+  disk in the drive holds a different level in the edited level's place, the
+  editor says so and writes nothing.
+- Levels with a special background (possible from a `.lvl` file) no longer
+  take terrain pieces from the brush; such pieces could be neither saved,
+  undone nor deleted.
+- The level checks follow the game: empty object slots of type 1 count
+  towards the four entrances (more crashed the game), the two-player marker
+  is the first slot of type 2 even when it is empty, and object positions
+  must be within -4096..4095 (an object far to the right hung the editor).
+  `savedisk.py` applies the same checks.
+- WHDLoad: the custom level list no longer crashes a 68000 (A600, A500+)
+  when `Levels` holds more than one level. File names of up to 107
+  characters are kept when a level is saved (longer ones were cut to 31
+  characters); with more than 318 levels the first 318 by name are listed;
+  a new level never overwrites an existing file.
+- A title of spaces only is not accepted.
+- An object dropped over the panel goes back to its place instead of
+  vanishing below the view.
+- A steel area dragged over more than 16 cells is cut at the cell where the
+  drag began, as its outline shows.
+- Floppy: Esc while the drives are searched cancels the save; disk 2 is
+  checked before the menu closes whenever its drive held another disk; a
+  track that does not read is read again, up to three times; a new level
+  passes over a slot left by an interrupted save; the level disk also works
+  with 32-bit addressing (accelerator cards).
+- Opening the menu ends a drag and drops keys pressed together with S or
+  N; Shift is followed also during disk access.
+- Undo: changing a parameter and changing it back no longer loses the
+  oldest step.
+- Leaving the custom level list keeps the title screen's level, for example
+  a MAYHEM level entered with its code.
+- Floppy: the briefing and the status block show the level's number as the
+  list does (its place on the level disk); the music follows that number.
+- Negative coordinates are shown with a minus sign, and the preview shows at
+  once when the editor reopens after a test play.
+
 ## V2.1
 
 - Undo and redo in the editor: `U` undoes the last edit, Shift+`U` redoes

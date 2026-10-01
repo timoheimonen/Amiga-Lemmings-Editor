@@ -141,7 +141,8 @@ erasing and hold Shift: the brush is hidden, the piece under the cursor is
 outlined (an erasing piece too), and LMB deletes it, which frees its place.
 
 Steel areas: drag with LMB to add an area (up to 16 x 16 cells of 4 x 4
-pixels, 32 areas); RMB removes the area under the cursor.
+pixels from the cell where the drag begins, 32 areas); RMB removes the area
+under the cursor.
 
 Objects: cursor left / right select an object of the style (entrances,
 exits, traps, decorations); LMB places it or drags an existing one; RMB
@@ -164,7 +165,8 @@ game disks are never written to.
   level, the game's own limits.
 - A custom level is the Amiga game's own level record with the graphics of
   the five styles. The editor cannot choose a special background or the
-  music; the music follows the level's place in the list.
+  music; the music follows the level's number in the list. A level with a
+  special background (from a `.lvl` file) takes no terrain pieces.
 - The editor and its test play are one-player; two-player levels are played
   from the 2 Player list.
 - Version 2 does not use V1.x save disks: it refuses one and never writes to

@@ -1,4 +1,4 @@
-; Lemmings In-Game Level Editor V2.1
+; Lemmings In-Game Level Editor V2.1.1
 ; Copyright (c) 2026 Timo Heimonen <timo.heimonen@proton.me>
 ; Licensed under the MIT License. See the LICENSE file for details.
 ;
@@ -83,8 +83,9 @@ list_page       rs.w 1
 list_sel        rs.w 1              ; selected row on the page
 list_count      rs.w 1              ; levels on the level disk
 list_hover      rs.w 1              ; text row the pointer was on
-custom_number   rs.w 1              ; list number of the custom level, 1..318, 0 for a new level
+custom_number   rs.w 1              ; list number (floppy: slot + 1), 0 for a new level
 custom_slot     rs.w 1              ; its slot (floppy), list entry (WHDLoad), -1 new
+list_old42      rs.w 1              ; the game's level $42(A5) when the list opened
 drag_col        rs.w 1              ; first cell of a steel area being dragged
 drag_row        rs.w 1
 obj_type        rs.w 1              ; object type placed by the left button (objects.s)
@@ -159,6 +160,8 @@ pending_undo    rs.b 1              ; U pressed: 1 undo, 2 redo (with shift)
 undo_count      rs.b 1              ; entries that can be undone (undo.s)
 redo_count      rs.b 1              ; entries after them that can be redone
 undo_open       rs.b 1              ; a range was taken for an edit in progress
+undo_lost_kind  rs.b 1              ; what undo_lost holds: 0 or UNDO_LOST_OLDEST/_NEXT
+undo_lost_redo  rs.b 1              ; redo_count before that entry was lost
 delete_mode     rs.b 1              ; Shift in the erasing mode: deleting pieces (delete.s)
 key_queue       rs.b 16             ; raw key codes for the menu and the list
 menu_line       rs.b 42             ; a text line
@@ -181,10 +184,13 @@ install:
         adda.l #GFX,a0
         move.l a0,gfx_ptr(a4)
         lea keyboard(pc),a0
-        move.l a0,$1750
+        move.w sr,-(sp)
+        ori.w #$0700,sr                 ; the keyboard interrupt must never
+        move.l a0,$1750                 ; run a half-written jump
         move.w #$4ef9,$174e
         move.l #$4e714e71,$1754
         move.w #$4e71,$1758
+        move.w (sp)+,sr
         bsr prepare_font
         lea frame(pc),a0
         move.l a0,$656
@@ -289,6 +295,7 @@ capture:
 keyboard:
         move.b d0,$26(a5)
         lea state(pc),a4
+        bsr editor_shift                ; in every state, so it never sticks
         tst.b disk_busy(a4)
         beq.s .menu
         cmp.b #$45,d0                  ; Esc cancels a disk operation
@@ -311,8 +318,7 @@ keyboard:
         bne .ack
         move.b #$c5,d0
         bra .ack
-.keys:  bsr editor_shift
-        tst.b d0
+.keys:  tst.b d0
         bmi.s .ack
         bsr custom_key                 ; params.s
         bne.s .ack
@@ -343,7 +349,8 @@ keyboard:
 .ack:   move.b #0,$bfec01
         jmp $175a
 
-; D0: raw key. Track the shift keys for the editor's steps of ten.
+; D0: raw key. Track the shift keys: steps of ten, redo, deleting pieces and
+; the title's shifted characters.
 editor_shift:
         cmp.b #$60,d0
         beq.s .down
@@ -379,6 +386,7 @@ frame:
         seq last_right(a4)
         clr.l $144f2           ; hide the skill-selection sprite
         bsr show_status
+        st disk_redraw(a4)     ; draw the preview even if nothing moves
 .input: move.b disk_redraw(a4),dirty(a4)
         clr.b disk_redraw(a4)
         tst.b menu_mode(a4)
@@ -602,11 +610,13 @@ frame:
 
 ; The level's terrain pieces up to the end marker, and the room left for the
 ; brush: at most MAX_PLACEMENTS pieces in all. A special background has no
-; terrain pieces.
+; terrain pieces and no room for any: the game does not draw them, and the
+; level could not be saved with them.
 count_placements:
-        moveq #0,d0
+        move.w #MAX_PLACEMENTS,d0
         tst.w $c5c2
         bne.s .counted
+        moveq #0,d0
         lea $c6c6,a0
 .scan:  cmpi.l #-1,(a0)+
         beq.s .counted
@@ -1275,8 +1285,8 @@ status_title:
 
 status_force:
         moveq #-1,d0            ; force every brush field to be drawn:
-        move.w d0,shown_x(a4)   ; -1 and 1 are never valid field values
-        move.w d0,shown_y(a4)
+        move.w #$8000,shown_x(a4) ; values the fields never have
+        move.w #$8000,shown_y(a4)
         move.w d0,shown_piece(a4)
         move.w d0,shown_remaining(a4)
         move.w #$0101,shown_sign(a4)
@@ -1407,14 +1417,26 @@ status_values:
 .room:
         bsr number
 .done:  rts
-; Draw D0 as four decimal digits.
+; Draw D0 as four decimal digits, or a negative D0 as a minus and three.
 number:
         movem.l d0-d7/a0-a2,-(sp)
+        moveq #3,d6                     ; digits after the first
+        tst.w d0
+        bpl.s .digits
+        neg.w d0
+        move.w d0,-(sp)
+        moveq #'-',d0
+        bsr glyph
+        addq.w #8,d4
+        move.w (sp)+,d0
+        moveq #2,d6
+.digits:
         and.l #$ffff,d0
-        move.l d0,d2
-        jsr $1862
+        jsr $1862                       ; four ASCII digits, changes D0..D3
         move.l d0,d5
-        moveq #3,d6
+        cmp.w #2,d6
+        bne.s .loop
+        rol.l #8,d5                     ; the thousands are not shown
 .loop:  rol.l #8,d5
         moveq #0,d0
         move.b d5,d0
@@ -1605,9 +1627,10 @@ level_slots     equ save_record+2048 ; occupied level disk slots in order
 level_status    equ level_slots+318*2
 level_titles    equ level_status+320
 list_text       equ level_titles+318*32
-list_path       equ list_text+600   ; WHDLoad: Levels/ and a file name
-custom_record   equ list_path+40    ; the custom level being played
+list_path       equ list_text+600   ; WHDLoad: Levels/ and a name of up to 107 characters
+custom_record   equ list_path+116   ; the custom level being played
 title_buf       equ custom_record+2048 ; 32 characters, NUL, and a spare NUL
 custom_file     equ title_buf+34    ; WHDLoad: the file name of the edited level
-undo_entries    equ custom_file+32  ; UNDO_STEPS entries and a spare one (undo.s)
-storage_end     equ undo_entries+(UNDO_STEPS+1)*UNDO_ENTRY
+undo_entries    equ custom_file+108 ; UNDO_STEPS entries and a spare one (undo.s)
+undo_lost       equ undo_entries+(UNDO_STEPS+1)*UNDO_ENTRY ; dropped by undo_new
+storage_end     equ undo_lost+UNDO_ENTRY

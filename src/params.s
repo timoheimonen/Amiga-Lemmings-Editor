@@ -1,4 +1,4 @@
-; Lemmings In-Game Level Editor V2.1
+; Lemmings In-Game Level Editor V2.1.1
 ; Copyright (c) 2026 Timo Heimonen <timo.heimonen@proton.me>
 ; Licensed under the MIT License. See the LICENSE file for details.
 ;
@@ -95,6 +95,31 @@ mode_switch:
 .drawn: st dirty(a4)
         st status_dirty(a4)
 .done:  rts
+
+; Before the menu takes the input: a drag in progress ends (a dragged object
+; goes back to its place), and input the frame hook has not taken yet is
+; dropped, so that it does not act after the menu. Preserves every register.
+input_reset:
+        clr.b steel_drag(a4)
+        tst.b obj_drag(a4)
+        beq.s .pending
+        clr.b obj_drag(a4)
+        bsr level_apply
+.pending:
+        move.w sr,-(sp)
+        ori.w #$0700,sr
+        clr.w pending_toggle(a4)        ; and pending_cycle
+        clr.b pending_flip(a4)
+        clr.b pending_select(a4)
+        clr.b pending_escape(a4)
+        clr.b pending_mode(a4)
+        clr.b pending_menu(a4)
+        clr.b pending_snap(a4)
+        clr.b pending_behind(a4)
+        clr.b pending_marker(a4)
+        clr.b pending_undo(a4)
+        move.w (sp)+,sr
+        rts
 
 ; From the frame hook in the objects and parameters modes. D0: left and right
 ; arrows (signed count), D5: up and down arrows.
@@ -508,7 +533,7 @@ status_texts:
         rts
 
 status_footer:
-        dc.b 5,50,'Editor V2.1 by Timo Heimonen',0,$ff
+        dc.b 5,50,'Editor V2.1.1 by Timo Heimonen',0,$ff
 status_modes:
         dc.w status_terrain-status_modes,status_steel-status_modes
         dc.w status_objects-status_modes,status_none-status_modes

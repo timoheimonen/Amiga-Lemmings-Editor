@@ -80,8 +80,11 @@ index damage, which never allows writing a slot.
 A write replaces one slot:
 
 1. Read track 0 and check that it is a level disk; read the target track
-   afresh. A slot the index calls empty must really be empty, and the new
-   record must pass the checks.
+   afresh. A slot the index calls empty must really be empty (a new level
+   passes over one that is not), an occupied slot must still hold the
+   edited level as it was opened or last saved (otherwise another level disk
+   is in the drive and nothing is written), and the new record must pass the
+   checks. A track that does not read is read again, up to three times.
 2. Write the whole data track, read it back and compare. The other slot on
    the track stays byte-identical.
 3. Read track 0 again and compare it with the first read.
@@ -103,22 +106,26 @@ in the same order.
 
 A level's name is its title in the record (`$7E0`, 32 characters,
 space-padded). The music is not part of the record: the game chooses it as
-for its own levels, by the level's number, which for a custom level is its
-place in the list, counted from 0 (a new level 0).
+for its own levels, by the level's number, which for a custom level is the
+number the list shows, counted from 0: on a level disk its slot, under
+WHDLoad its place in the list (a new level 0).
 
 ## WHDLoad
 
 The WHDLoad version stores custom levels as files: every file in the
 directory `Levels` whose name ends in `.lvl` (upper or lower case) and that
 holds exactly 2048 bytes is a custom level, subject to the same checks. The
-list shows them sorted by file name, at most 318; files that are not exactly
-one valid level are listed as damaged. A new level is saved as the first free
-`LevelNNN.lvl`.
+list shows them sorted by file name, at most 318 (the first 318 by name);
+names longer than 107 characters are left out, and files that are not
+exactly one valid level are listed as damaged. A new level is saved as the
+first free `LevelNNN.lvl`, a name neither listed nor found as a file; when
+`Level001.lvl` to `Level999.lvl` are all taken, nothing is written.
 
 ## Levels for two players
 
 A level is for two players when it has an entrance, the marker (the first
-object of type 2) and an exit of each player. In the game's two-player mode
+slot of type 2, also an empty one, as the game takes it) and an exit of each
+player. In the game's two-player mode
 a lemming at x, y in an exit counts for the green player when
 |x - 8 - marker x| + |y - 32 - marker y| <= 32, otherwise for the blue
 player; an exit is the green player's when the nearest pixel of its trigger
@@ -134,10 +141,13 @@ two-player levels of the game. `savedisk.py list` marks these levels `2P`.
   lemmings, time 1..9 minutes, every skill count 0..99;
 - start position 0..1280, a multiple of 4;
 - graphics style 0..4, special background 0..4, the unused word `$1E` zero;
-- objects: a slot with x = 0 is empty and otherwise ignored; an occupied slot
-  has a type below the style's object count and flags `$000F`, `$400F`,
-  `$800F` or `$C00F`; at most four entrances (type 1); for the first 16 slots
-  x > 0, y >= 0 and the type's trigger area inside the attribute grid:
+- objects: a slot with x = 0 is empty and otherwise ignored, except its type:
+  the game's entrance table takes every slot of type 1 and its marker is the
+  first slot of type 2, empty or not; an occupied slot has a type below the
+  style's object count, flags `$000F`, `$400F`, `$800F` or `$C00F`, and x and
+  y within -4096..4095; at most four slots of type 1, empty ones included;
+  for the first 16 slots x > 0, y >= 0 and the type's trigger area inside
+  the attribute grid:
   x / 4 + trigger x + width <= 408, y / 4 + trigger y + height <= 42 (cells
   of 4 x 4 pixels, integer division);
 - terrain: at most 399 pieces before the first `$FFFFFFFF`, every later entry

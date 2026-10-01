@@ -1,4 +1,4 @@
-; Lemmings In-Game Level Editor V2.1
+; Lemmings In-Game Level Editor V2.1.1
 ; Copyright (c) 2026 Timo Heimonen <timo.heimonen@proton.me>
 ; Licensed under the MIT License. See the LICENSE file for details.
 ;
@@ -38,6 +38,8 @@ UNDO_PIECE      equ 2
 UNDO_DELETE     equ 3
 UNDO_TAKEN      equ 1                   ; undo_open: the range is in the spare entry
 UNDO_MERGED     equ 2                   ; undo_open: it shares the top entry
+UNDO_LOST_OLDEST equ 1                  ; undo_lost: the oldest entry, dropped
+UNDO_LOST_NEXT  equ 2                   ; undo_lost: the first redo entry, overwritten
 
 ; A0: offset of the range in custom_record, D0: its length (at most
 ; UNDO_DATA), D1: tag, nonzero for changes that share an entry with the
@@ -99,13 +101,20 @@ undo_deleted:
         rts
 
 ; A new entry at the top of the history, in A1. Drops the redo entries and,
-; when the history is full, its oldest entry. Clobbers D2/A1-A2.
+; when the history is full, its oldest entry. The entry it drops or
+; overwrites is kept in undo_lost with the redo count, so that a row of
+; changes that ends where it started can give it back (undo_check).
+; Clobbers D2/A1-A2.
 undo_new:
+        move.b redo_count(a4),undo_lost_redo(a4)
         clr.b redo_count(a4)
         moveq #0,d2
         move.b undo_count(a4),d2
         cmp.w #UNDO_STEPS,d2
-        blo .top
+        blo .next
+        move.b #UNDO_LOST_OLDEST,undo_lost_kind(a4)
+        moveq #0,d2
+        bsr.s undo_keep
         lea undo_entries(pc),a1         ; move the others down one entry
         lea UNDO_ENTRY(a1),a2
         move.w #(UNDO_STEPS-1)*UNDO_ENTRY/2-1,d2
@@ -113,6 +122,9 @@ undo_new:
         dbra d2,.move
         moveq #UNDO_STEPS-1,d2
         move.b d2,undo_count(a4)
+        bra.s .top
+.next:  move.b #UNDO_LOST_NEXT,undo_lost_kind(a4)
+        bsr.s undo_keep
 .top:   addq.b #1,undo_count(a4)
 
 ; D2: entry number. Return its address in A1.
@@ -120,6 +132,17 @@ undo_entry:
         lea undo_entries(pc),a1
         mulu #UNDO_ENTRY,d2
         adda.l d2,a1
+        rts
+
+; D2: entry number. Keep a copy of the entry in undo_lost. Clobbers A1-A2.
+undo_keep:
+        move.w d2,-(sp)
+        bsr.s undo_entry
+        lea undo_lost(pc),a2
+        move.w #UNDO_ENTRY/2-1,d2
+.copy:  move.w (a1)+,(a2)+
+        dbra d2,.copy
+        move.w (sp)+,d2
         rts
 
 ; From level_apply: settle the range taken for the edit. A range the edit
@@ -149,6 +172,7 @@ undo_check:
         cmpi.b #UNDO_MERGED,undo_open(a4)
         bne.s .end
         subq.b #1,undo_count(a4)
+        bsr.s undo_give_back
         bra.s .end
 .changed:
         cmpi.b #UNDO_TAKEN,undo_open(a4)
@@ -156,6 +180,35 @@ undo_check:
         bsr.s undo_commit
 .end:   clr.b undo_open(a4)
         movem.l (sp)+,d0-d2/a0-a2
+.done:  rts
+
+; The shared top entry of a row of changes was forgotten: the row ended where
+; it started. Give back the entry that its first change dropped or overwrote
+; (undo_new), and the redo steps. Clobbers D0-D2/A0-A2.
+undo_give_back:
+        move.b undo_lost_kind(a4),d0
+        beq.s .done
+        clr.b undo_lost_kind(a4)
+        moveq #0,d2
+        move.b undo_count(a4),d2
+        cmp.b #UNDO_LOST_OLDEST,d0
+        bne.s .put
+        moveq #0,d1                     ; the entries up one place
+        move.b d2,d1
+        mulu #UNDO_ENTRY/2,d1
+        bsr undo_entry
+        lea UNDO_ENTRY(a1),a2
+        bra.s .more
+.up:    move.w -(a1),-(a2)
+.more:  dbra d1,.up
+        addq.b #1,undo_count(a4)
+        moveq #0,d2                     ; and the oldest one first
+.put:   bsr undo_entry
+        lea undo_lost(pc),a0
+        move.w #UNDO_ENTRY/2-1,d1
+.copy:  move.w (a0)+,(a1)+
+        dbra d1,.copy
+        move.b undo_lost_redo(a4),redo_count(a4)
 .done:  rts
 
 ; Put the spare entry on top of the history. Preserves every register.
@@ -174,6 +227,7 @@ undo_clear:
         clr.b undo_count(a4)
         clr.b redo_count(a4)
         clr.b undo_open(a4)
+        clr.b undo_lost_kind(a4)
         rts
 
 ; From the frame hook: D0 = 1 undo, 2 redo. Not while an object or a steel
@@ -197,14 +251,19 @@ undo_key:
         bne.s .put
         bsr terrain_pop
         move.l d0,8(a1)
-        cmp.l #-1,d0                    ; no piece (never expected); a behind
-        beq .end                        ; piece is negative as a long
+        cmp.l #-1,d0                    ; no piece; a behind piece is
+        beq .lost                       ; negative as a long
         bsr terrain_rebuild
         bra .end
 .put:   cmpi.w #UNDO_DELETE,(a1)        ; a deleted piece back at its place
         bne .swap
         moveq #0,d0
         move.w 2(a1),d0
+        bsr pieces_count
+        cmp.w d2,d0                     ; at most after the last piece,
+        bhi .lost
+        tst.w remaining(a4)             ; with room for it
+        beq .lost
         move.l 8(a1),d1
         bsr terrain_put
         move.l d1,d0
@@ -219,12 +278,19 @@ undo_key:
         cmpi.w #UNDO_PIECE,(a1)
         bne.s .take
         move.l 8(a1),d0
+        cmp.l #-1,d0
+        beq .lost
+        tst.w remaining(a4)
+        beq .lost
         bsr terrain_push
         bra .end
 .take:  cmpi.w #UNDO_DELETE,(a1)        ; the piece deleted again
         bne .swap
         moveq #0,d0
         move.w 2(a1),d0
+        bsr pieces_count
+        cmp.w d2,d0
+        bhs .lost
         bsr terrain_take
         move.l d1,d0
         bsr terrain_rebuild
@@ -247,11 +313,21 @@ undo_key:
         cmp.w 8+$18(a3),d0
         beq.s .end
         move.w d0,($9da8).l
+        bra.s .end
+        ; The history no longer matches the level's pieces (never expected,
+        ; the steps are undone in order): it is dropped.
+.lost:  bsr undo_clear
 .end:   bsr.s undo_break
         or.b #1,status_dirty(a4)
         st dirty(a4)
         movem.l (sp)+,d0-d7/a0-a3
 .done:  rts
+
+; D2: the level's pieces, those of the record and the placements.
+pieces_count:
+        bsr record_count
+        add.w paint_count+2(a4),d2
+        rts
 
 ; End the row of changes that share the top entry, so that the next change
 ; of a parameter takes an entry of its own. Preserves every register.
@@ -392,6 +468,8 @@ terrain_rebuild:
 .placed:
         move.l (a2)+,d0
         bsr .piece
+        tst.w d7                        ; the guard rows are clear unless
+        beq.s .next                     ; this placement reached them
         bsr .guard
 .next:  subq.l #1,d6
         bpl .placed
@@ -404,7 +482,8 @@ terrain_rebuild:
         jsr $4b3a
         movem.l (sp)+,d6/a2/a4
         rts
-; D0: a piece. Compose it when it overlaps the window.
+; D0: a piece. Compose it when it overlaps the window. D7 returns nonzero
+; when it was composed and reaches the guard rows (0..3, 164..167).
 .piece: movem.l d0/d6/a2,-(sp)
         move.l d0,d7
         bsr piece_rect
@@ -420,11 +499,22 @@ terrain_rebuild:
         add.w clip_rows(a4),d4
         cmp.w d4,d2
         bge .skip
+        moveq #1,d4
+        cmp.w #4,d2
+        blt.s .guarded
+        cmp.w #164,d3
+        bge.s .guarded
+        moveq #0,d4
+.guarded:
+        move.w d4,-(sp)
         move.l d7,d0
         bsr piece_brush
         moveq #2,d2
         bsr composite
-.skip:  movem.l (sp)+,d0/d6/a2
+        move.w (sp)+,d7
+        bra.s .done
+.skip:  moveq #0,d7
+.done:  movem.l (sp)+,d0/d6/a2
         rts
 
 ; D0: a terrain piece. Return its rectangle: D0/D1 first and last byte
