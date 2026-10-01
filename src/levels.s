@@ -1,4 +1,4 @@
-; Lemmings In-Game Level Editor V2.1
+; Lemmings In-Game Level Editor V2.1.1
 ; Copyright (c) 2026 Timo Heimonen <timo.heimonen@proton.me>
 ; Licensed under the MIT License. See the LICENSE file for details.
 ;
@@ -45,6 +45,7 @@ LEVELDATA       equ $1f7a2              ; leveldata: $590 bytes per style
         ifd WHDLOAD
 LIST_NAMES      equ $1a100              ; free part of the editor block
 LIST_NAMES_SIZE equ $5e00
+NAME_MAX        equ 107                 ; the longest AmigaDOS file name
         endif
 LEVEL_INDEX_END equ 64+LEVEL_SLOTS*2
 LS_UNKNOWN      equ 0                   ; level_status values
@@ -68,6 +69,7 @@ list_enter:
         clr.w list_page(a4)
         clr.w list_sel(a4)
         move.b $32(a5),list_old32(a4)
+        move.w $42(a5),list_old42(a4)
         lea (FADE_BLACK).l,a0
         jsr $19e4
 
@@ -80,7 +82,6 @@ level_list_return:
         clr.w list_count(a4)
         clr.b key_head(a4)
         clr.b key_tail(a4)
-        clr.b shift(a4)
         st list_open(a4)
         st title_disk(a4)
         lea txt_list_searching(pc),a0
@@ -144,7 +145,7 @@ list_loop:
         clr.b custom_play(a4)
         clr.b custom_edit(a4)
         move.w #3,$aa(a5)               ; the title screen's CUSTOM follows MAYHEM
-        move.w #90,$42(a5)
+        move.w list_old42(a4),$42(a5)   ; and its level, which the tunes changed
         tst.b list_played(a4)
         beq.s .title
         clr.b list_played(a4)
@@ -172,7 +173,7 @@ list_edit:
         adda.l #LIST_NAMES,a0
         adda.w d0,a0
         lea custom_file(pc),a1
-        moveq #30,d0
+        moveq #NAME_MAX-1,d0            ; the list holds no longer names
 .name:  move.b (a0)+,(a1)+
         dbeq d0,.name
         clr.b (a1)
@@ -215,6 +216,14 @@ list_start:
         clr.b custom_test(a4)
         clr.b leaving(a4)
         bsr level_remember
+        ifnd WHDLOAD
+        tst.w d0
+        bmi.s .number
+        lea level_slots(pc),a0          ; the slot, whose number the list shows
+        add.w d0,d0
+        move.w 0(a0,d0.w),d0
+        endif
+.number:
         addq.w #1,d0
         move.w d0,custom_number(a4)
         subq.w #1,d0
@@ -528,6 +537,7 @@ level_new:
         lea $dff000,a6
         clr.b list_players(a4)
         move.b $32(a5),list_old32(a4)
+        move.w $42(a5),list_old42(a4)
         lea (FADE_BLACK).l,a0
         jsr $19e4
         st list_mode(a4)
@@ -535,7 +545,6 @@ level_new:
         clr.w list_sel(a4)
         clr.b key_head(a4)
         clr.b key_tail(a4)
-        clr.b shift(a4)
         clr.b list_retry(a4)
         st list_open(a4)
         clr.b title_disk(a4)
@@ -1334,7 +1343,7 @@ list_find_files:
         movem.l d1-d7/a1-a3,-(sp)
         clr.w list_count(a4)
         bsr file_mailbox
-        bne.s .none
+        bne .none
         move.l #LIST_NAMES_SIZE-1,d0
         lea levels_dir(pc),a0
         lea install(pc),a1
@@ -1343,8 +1352,6 @@ list_find_files:
         clr.b LIST_NAMES_SIZE-1(a1)
         jsr resload_ListFiles(a2)
         movea.l d7,a0
-        lea level_slots(pc),a2
-        lea level_status(pc),a3
         moveq #0,d2
         move.l d0,d3
         bra.s .more
@@ -1355,22 +1362,29 @@ list_find_files:
         sub.l a0,d1                     ; length + 1
         cmp.l #6,d1
         blo.s .skip
-        move.l -5(a1),d0
+        cmp.l #NAME_MAX+1,d1            ; longer names are not AmigaDOS ones
+        bhi.s .skip
+        move.b -5(a1),d0                ; the last four characters, a byte
+        lsl.l #8,d0                     ; at a time: the names are packed,
+        move.b -4(a1),d0                ; so they may start at an odd
+        lsl.l #8,d0                     ; address (a long read there is an
+        move.b -3(a1),d0                ; address error on a 68000)
+        lsl.l #8,d0
+        move.b -2(a1),d0
         or.l #$00202020,d0              ; ".LVL" and ".lvl"
         cmp.l #'.lvl',d0
         bne.s .skip
-        cmp.w #LEVEL_SLOTS,d2
-        bhs.s .skip
-        move.l a0,d0
-        sub.l d7,d0
-        move.w d0,(a2)+
-        clr.b (a3)+
-        addq.w #1,d2
+        bsr list_insert_name
 .skip:  movea.l a1,a0
 .more:  subq.l #1,d3
         bpl.s .name
         move.w d2,list_count(a4)
-        bsr list_sort_names
+        lea level_status(pc),a3         ; no level read yet
+        bra.s .status
+.unknown:
+        clr.b (a3)+
+.status:
+        dbra d2,.unknown
         tst.b list_players(a4)
         beq.s .sorted
         bsr list_keep_two
@@ -1425,37 +1439,43 @@ list_keep_two:
         movem.l (sp)+,d0-d7/a0-a3
         rts
 
-; Insertion sort of level_slots by the names they point to.
-list_sort_names:
-        movem.l d0-d4/a0-a3,-(sp)
+; A0: a name in LIST_NAMES (at D7), D2: the names kept in level_slots so far,
+; in order by name (ignoring case). Insert it at its place; with LEVEL_SLOTS
+; names kept, the last one drops out, or this one when it comes after them.
+; D2 returns the names kept.
+list_insert_name:
+        movem.l d0-d1/d3/a1-a2,-(sp)
         lea level_slots(pc),a2
-        lea install(pc),a3
-        adda.l #LIST_NAMES,a3
-        moveq #1,d2
-.outer: cmp.w list_count(a4),d2
-        bhs.s .done
-        move.w d2,d3
-        move.w d2,d0
-        add.w d0,d0
-        move.w 0(a2,d0.w),d4            ; the name to insert
-.inner: tst.w d3
-        beq.s .place
+        moveq #0,d3                     ; its place
+.find:  cmp.w d2,d3
+        bhs.s .found
         move.w d3,d0
         add.w d0,d0
-        move.w -2(a2,d0.w),d1
-        lea 0(a3,d1.w),a0
-        lea 0(a3,d4.w),a1
+        movea.l d7,a1
+        adda.w 0(a2,d0.w),a1
         bsr list_compare
-        bls.s .place
-        move.w d1,0(a2,d0.w)
-        subq.w #1,d3
-        bra.s .inner
-.place: move.w d3,d0
-        add.w d0,d0
-        move.w d4,0(a2,d0.w)
+        blo.s .found                    ; before this one
+        addq.w #1,d3
+        bra.s .find
+.found: cmp.w #LEVEL_SLOTS,d3
+        bhs.s .done
+        cmp.w #LEVEL_SLOTS,d2
+        bhs.s .full
         addq.w #1,d2
-        bra.s .outer
-.done:  movem.l (sp)+,d0-d4/a0-a3
+.full:  move.w d3,d0                    ; the names from its place up one
+        add.w d0,d0
+        move.w d2,d1
+        subq.w #1,d1
+        add.w d1,d1
+.up:    cmp.w d0,d1
+        bls.s .put
+        move.w -2(a2,d1.w),0(a2,d1.w)
+        subq.w #2,d1
+        bra.s .up
+.put:   move.l a0,d1
+        sub.l d7,d1
+        move.w d1,0(a2,d0.w)
+.done:  movem.l (sp)+,d0-d1/d3/a1-a2
         rts
 
 ; A0, A1: names. Compare them ignoring case; the condition codes are those of
@@ -1688,14 +1708,26 @@ check_level_record:
         cmp.w #64,d6
         blo.s .pieces
 .limits:
-        ; Objects: x = 0 is an empty slot; otherwise a known type and flags
-        ; $000F, $400F, $800F or $C00F.
+        ; Objects: x = 0 is an empty slot; otherwise a known type, flags
+        ; $000F, $400F, $800F or $C00F, and x and y in -4096..4095. The
+        ; game's entrance table ($2D02) takes every slot of type 1, empty
+        ; ones too, so they count towards the four entrances.
         lea $20(a2),a0
         moveq #0,d2                     ; slot
         moveq #0,d7                     ; entrances
 .object:
-        move.w (a0),d0
+        cmpi.w #1,4(a0)
+        bne.s .used
+        addq.w #1,d7
+.used:  move.w (a0),d0
         beq .next_object
+        add.w #4096,d0
+        cmp.w #8192,d0
+        bhs .bad
+        move.w 2(a0),d0
+        add.w #4096,d0
+        cmp.w #8192,d0
+        bhs .bad
         move.w 4(a0),d1
         cmp.w d1,d5
         bls .bad
@@ -1703,10 +1735,6 @@ check_level_record:
         and.w #$3fff,d0
         cmp.w #$000f,d0
         bne .bad
-        cmp.w #1,d1
-        bne.s .trigger
-        addq.w #1,d7
-.trigger:
         cmp.w #16,d2
         bhs.s .next_object
         ; The trigger area: x >> 2 + x offset + width <= 408 and
@@ -1805,8 +1833,9 @@ check_level_record:
 
 ; A0: a level record that passes check_level_record. Return D0 = 0 (Z set)
 ; when it is valid for two players as the game's two-player mode reads it:
-; at least one entrance, the marker (the first object of type 2, $2D80) and
-; exits (trigger code 1, which only the first 16 slots have) of both players.
+; at least one entrance, the marker (the first slot of type 2, empty or not,
+; as $2D80 takes it) and exits (trigger code 1, which only the first 16 slots
+; have) of both players.
 ; A lemming at x, y in an exit counts for the green player when
 ; |x - 8 - marker x| + |y - 32 - marker y| <= 32 ($6DE0..$6E0E), otherwise
 ; for the blue player; an exit is the green player's when the nearest point
@@ -1816,11 +1845,9 @@ two_player_level:
         movea.l a0,a2
         lea $20(a2),a0
         moveq #31,d7
-.find:  tst.w (a0)
-        beq.s .other
-        cmpi.w #2,4(a0)
+.find:  cmpi.w #2,4(a0)
         beq.s .marker
-.other: addq.l #8,a0
+        addq.l #8,a0
         dbra d7,.find
         bra .no
 .marker:

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Lemmings In-Game Level Editor V2.1
+# Lemmings In-Game Level Editor V2.1.1
 # Copyright (c) 2026 Timo Heimonen <timo.heimonen@proton.me>
 # Licensed under the MIT License. See the LICENSE file for details.
 """Create level disks and exchange custom levels without distributing game data."""
@@ -71,6 +71,7 @@ MAX_SCROLL = 1280                       # the view scrolls in steps of 4 up to 1
 ENTRANCE = 1                            # object type of an entrance, in every style
 MARKER = 2                              # the two-player exit marker, in every style
 MAX_ENTRANCES = 4                       # the game's entrance table
+OBJECT_RANGE = 4096                     # object x and y within -4096..4095
 TRIGGER_SLOTS = 16                      # objects with a trigger area in the grid
 GRID_WIDTH = 408                        # attribute grid, cells of 4 x 4 pixels
 GRID_HEIGHT = 42
@@ -105,11 +106,14 @@ def check_record(record: bytes, styles: List[Dict]) -> None:
     entrances = 0
     for slot in range(32):
         x, y, kind, flags = struct.unpack_from('>hhHH', record, 0x20 + slot * 8)
+        # The game's entrance table takes every slot of type 1, empty ones too.
+        entrances += kind == ENTRANCE
         if not x:
             continue
         if kind >= styles[style]['object_count'] or flags not in OBJECT_FLAGS:
             raise ValueError(f'Object {slot + 1}: invalid type or flags')
-        entrances += kind == ENTRANCE
+        if not (-OBJECT_RANGE <= x < OBJECT_RANGE and -OBJECT_RANGE <= y < OBJECT_RANGE):
+            raise ValueError(f'Object {slot + 1}: position out of range')
         if slot < TRIGGER_SLOTS:
             tx, ty, tw, th = styles[style]['triggers'][kind]
             if (x < 0 or y < 0 or (x >> 2) + tx + tw > GRID_WIDTH
@@ -141,15 +145,16 @@ def check_record(record: bytes, styles: List[Dict]) -> None:
 def two_player(record: bytes, styles: List[Dict]) -> bool:
     """Whether a checked record is valid for the game's two-player mode.
 
-    It needs an entrance, the marker (the first object of type 2) and exits of
-    both players. A lemming at x, y in an exit counts for the green player
-    when |x - 8 - marker x| + |y - 32 - marker y| <= 32, otherwise for the
-    blue player; an exit is the green player's when the nearest point of its
-    trigger area is that near. Only the first 16 slots have trigger areas.
+    It needs an entrance, the marker (the first slot of type 2, empty or not,
+    as the game takes it) and exits of both players. A lemming at x, y in an
+    exit counts for the green player when |x - 8 - marker x| + |y - 32 -
+    marker y| <= 32, otherwise for the blue player; an exit is the green
+    player's when the nearest point of its trigger area is that near. Only the
+    first 16 slots have trigger areas.
     """
     style = struct.unpack_from('>H', record, 0x1a)[0]
     objects = [struct.unpack_from('>hhHH', record, 0x20 + slot * 8) for slot in range(32)]
-    marker = next(((x, y) for x, y, kind, _ in objects if x and kind == MARKER), None)
+    marker = next(((x, y) for x, y, kind, _ in objects if kind == MARKER), None)
     if marker is None or not any(x and kind == ENTRANCE for x, _, kind, _ in objects):
         return False
     point = (marker[0] + 8, marker[1] + 32)

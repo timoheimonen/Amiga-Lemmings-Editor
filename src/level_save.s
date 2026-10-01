@@ -1,4 +1,4 @@
-; Lemmings In-Game Level Editor V2.1
+; Lemmings In-Game Level Editor V2.1.1
 ; Copyright (c) 2026 Timo Heimonen <timo.heimonen@proton.me>
 ; Licensed under the MIT License. See the LICENSE file for details.
 ;
@@ -16,6 +16,7 @@
 ; A4 is the editor state, A5 the game globals and A6 the custom chip base.
 
 LEVEL_FULL      equ -11                 ; no free slot on the level disk
+LEVEL_OTHER     equ -12                 ; the slot holds another level
 
 ; From the frame hook: open the menu and ask for the title, starting with the
 ; current one. D0: 0 saves the level (S), 1 only renames it (N).
@@ -47,11 +48,11 @@ level_save_open:
 level_title_key:
         cmp.b #KEY_ESC,d0
         beq menu_leave
+        lea title_buf(pc),a0
         bsr menu_is_return
         beq.s .accept
         moveq #0,d1
         move.b title_len(a4),d1
-        lea title_buf(pc),a0
         cmp.b #KEY_BACKSPACE,d0
         bne.s .char
         tst.w d1
@@ -173,22 +174,16 @@ level_saved:
         dbra d0,.pieces
         or.b #1,status_dirty(a4)
         ; The placements are part of the record now.
-        lea custom_record+$120(pc),a0
-        moveq #0,d0
-.count: cmpi.l #-1,(a0)+
-        beq.s .counted
-        addq.w #1,d0
-        bra.s .count
-.counted:
-        neg.w d0
-        add.w #MAX_PLACEMENTS,d0
-        move.w d0,remaining(a4)
+        bsr count_placements
         clr.l paint_count(a4)
         bsr level_remember
         lea txt_level_saved(pc),a0
         bra level_save_message
 .error: lea txt_level_full(pc),a0
         cmp.l #LEVEL_FULL,d0
+        beq.s level_save_message
+        lea txt_level_other(pc),a0
+        cmp.l #LEVEL_OTHER,d0
         beq.s level_save_message
         bsr menu_error_text
 
@@ -251,6 +246,7 @@ level_build:
 
         ifnd WHDLOAD
 ; Find the level disk in a drive, or ask for it, and store the level there.
+; Esc while a drive is read cancels the save.
 level_find_disk:
         moveq #0,d7
 .drive: move.l d7,d0
@@ -260,9 +256,13 @@ level_find_disk:
         move.l d7,d0
         moveq #0,d1
         bsr disk_read_track
+        bsr.s native_check
         tst.l d0
-        bne.s .next
-        lea install(pc),a0
+        beq.s .read
+        cmp.l #DISK_CANCELLED,d0
+        beq level_saved
+        bra.s .next
+.read:  lea install(pc),a0
         adda.l #DISK_TRACK,a0
         bsr validate_level_header
         tst.l d0
@@ -272,14 +272,12 @@ level_find_disk:
 .next:  addq.w #1,d7
         cmp.w #4,d7
         blo.s .drive
+        st native_used(a4)              ; disk 2 may be taken out for it
         move.b #M_PROMPT_LEVEL,menu_mode(a4)
         lea txt_insert_level(pc),a0
         move.l a0,menu_msg(a4)
         bra menu_draw_message
-.found: cmp.b native_drive(a4),d7
-        bne.s .store
-        st native_used(a4)              ; disk 2 must come back afterwards
-.store: bsr menu_show_working
+.found: bsr menu_show_working
         move.l d7,d0
         move.w custom_slot(a4),d1
         ext.l d1
@@ -287,7 +285,29 @@ level_find_disk:
         tst.l d0
         bne level_saved
         move.w d1,custom_slot(a4)
+        addq.w #1,d1                    ; its number in the list
+        move.w d1,custom_number(a4)
         bra level_saved
+
+; D7: drive just read, D0: the result, with its track 0 in DISK_TRACK. When
+; it is the drive the game reads disk 2 from and disk 2 is not there (its
+; directory starts with Ground1), disk 2 must come back before the menu
+; closes. Preserves every register.
+native_check:
+        cmp.b native_drive(a4),d7
+        bne.s .done
+        move.l a0,-(sp)
+        tst.l d0
+        bne.s .other
+        lea install(pc),a0
+        adda.l #DISK_TRACK+$410,a0
+        cmpi.l #'Grou',(a0)
+        bne.s .other
+        cmpi.l #'nd1'<<8,4(a0)
+        beq.s .disk2
+.other: st native_used(a4)
+.disk2: movea.l (sp)+,a0
+.done:  rts
 
 ; The level disk prompt: Return looks again, Esc leaves.
 level_prompt_key:
@@ -298,11 +318,14 @@ level_prompt_key:
         rts
 
 ; D0: drive, D1: slot 0..317, or -1 for the lowest free one. Store
-; save_record there. Return D0 = 0 and D1 = the slot, or an error.
+; save_record there. Return D0 = 0 and D1 = the slot, or an error. A new
+; level passes over a slot that the index calls free but that holds data (an
+; earlier save that could not update the index): it is never overwritten.
 disk_store_level:
         movem.l d2-d7/a0-a6,-(sp)
         lea state(pc),a4
         move.l d1,d7
+        move.l d1,d6                    ; negative: a new level
         bsr disk_acquire
         tst.l d0
         bne .done
@@ -322,15 +345,18 @@ disk_store_level:
         tst.l d7
         bpl.s .slot
         ; The lowest free slot by the index.
-        lea 64(a0),a2
         moveq #0,d7
-.free:  tst.b (a2)
+.free:  cmp.w #LEVEL_SLOTS,d7
+        bhs.s .full
+        lea install(pc),a2
+        adda.l #DISK_HEADER+64,a2
+        move.w d7,d0
+        add.w d0,d0
+        tst.b (a2,d0.w)
         beq.s .slot
-        addq.l #2,a2
-        addq.w #1,d7
-        cmp.w #LEVEL_SLOTS,d7
-        blo.s .free
-        moveq #LEVEL_FULL,d0
+.taken: addq.w #1,d7
+        bra.s .free
+.full:  moveq #LEVEL_FULL,d0
         bra .release
 .slot:  cmp.l #LEVEL_SLOTS,d7
         bhs .refuse
@@ -352,12 +378,22 @@ disk_store_level:
         move.w d7,d0
         add.w d0,d0
         tst.b (a0,d0.w)
-        bne.s .write
+        bne.s .occupied
         movea.l a2,a0
         move.w #LEVEL_SLOT_SIZE/4-1,d0
 .empty: tst.l (a0)+
         dbne d0,.empty
         bne .changed
+        bra.s .write
+        ; An occupied slot must still hold the edited level as it was
+        ; loaded or last saved: another level disk has other levels there.
+.occupied:
+        movea.l a2,a0
+        move.l #LEVEL_SIZE,d0
+        moveq #-1,d1
+        bsr crc32
+        cmp.l saved_crc(a4),d0
+        bne .other
 .write: lea save_record(pc),a0
         move.w #LEVEL_SIZE/4-1,d0
 .copy:  move.l (a0)+,(a2)+
@@ -400,7 +436,11 @@ disk_store_level:
         moveq #DISK_INDEX_WRITE,d0
         bra.s .release
 .changed:
+        tst.l d6
+        bmi .taken                      ; a new level: the next free slot
         moveq #DISK_CHANGED,d0
+        bra.s .release
+.other: moveq #LEVEL_OTHER,d0
         bra.s .release
 .refuse:
         moveq #DISK_REFUSED,d0
@@ -434,7 +474,7 @@ level_prompt_key:
         rts
 
 ; Store save_record as a file in Levels: the edited level's own file, or for
-; a new level the first free name LevelNNN.lvl. Return D0 = 0.
+; a new level the first free name LevelNNN.lvl. Return D0 = 0, or an error.
 level_store_file:
         movem.l d1-d7/a0-a3,-(sp)
         bsr file_mailbox
@@ -442,16 +482,9 @@ level_store_file:
         tst.w custom_slot(a4)
         bpl.s .save
         bsr level_new_name
-.save:  lea list_path(pc),a1
-        lea levels_dir(pc),a0
-.dir:   move.b (a0)+,(a1)+
-        bne.s .dir
-        move.b #'/',-1(a1)
-        lea custom_file(pc),a0
-.name:  move.b (a0)+,(a1)+
-        bne.s .name
+        bne.s .done
+.save:  bsr.s level_file_path
         move.l #LEVEL_SIZE,d0
-        lea list_path(pc),a0
         lea save_record(pc),a1
         jsr resload_SaveFile(a2)
         clr.w custom_slot(a4)           ; saved under custom_file from now on
@@ -461,8 +494,23 @@ level_store_file:
 .done:  movem.l (sp)+,d1-d7/a0-a3
         rts
 
+; Put Levels/ and custom_file into list_path. Return A0 = list_path.
+level_file_path:
+        lea list_path(pc),a1
+        lea levels_dir(pc),a0
+.dir:   move.b (a0)+,(a1)+
+        bne.s .dir
+        move.b #'/',-1(a1)
+        lea custom_file(pc),a0
+.name:  move.b (a0)+,(a1)+
+        bne.s .name
+        lea list_path(pc),a0
+        rts
+
 ; A2: resload base. Put the first name LevelNNN.lvl that is not in Levels
-; into custom_file.
+; into custom_file: not in the listing, and checked once more by its size,
+; since the listing holds only the names that fit into its buffer. Return
+; D0 = 0 (Z set), or LEVEL_FULL when Level001..Level999 are all taken.
 level_new_name:
         move.l #LIST_NAMES_SIZE-1,d0
         lea levels_dir(pc),a0
@@ -498,11 +546,15 @@ level_new_name:
         bne.s .skip
 .more:  subq.l #1,d4
         bpl.s .entry
-        rts
+        bsr level_file_path             ; not listed; is there such a file?
+        jsr resload_GetFileSize(a2)
+        tst.l d0
+        beq.s .done
 .taken: addq.w #1,d5
         cmp.w #999,d5
         bls.s .number
-        rts
+        moveq #LEVEL_FULL,d0
+.done:  rts
 
 txt_new_file:           dc.b 'Level',0
         endif
@@ -513,7 +565,15 @@ txt_help_title:         dc.b 'Return: accept   Esc: back',0
 txt_level_saved:        dc.b 'The level was saved.',0
 txt_level_invalid:      dc.b 'The level cannot be saved: it is',$0a
                         dc.b 'outside the limits of the game.',0
+        ifd WHDLOAD
+txt_level_full:         dc.b 'There is no free name from',$0a
+                        dc.b 'Level001.lvl to Level999.lvl.',0
+        else
 txt_level_full:         dc.b 'The level disk is full.',0
+        endif
+txt_level_other:        dc.b 'The level disk holds another level',$0a
+                        dc.b 'in this place. Insert the disk the',$0a
+                        dc.b 'level came from.',0
         ifnd WHDLOAD
 txt_insert_level:       dc.b 'Insert the LEVEL DISK into a drive',$0a
                         dc.b 'and press Return.',0

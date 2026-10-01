@@ -1,4 +1,4 @@
-; Lemmings In-Game Level Editor V2.1
+; Lemmings In-Game Level Editor V2.1.1
 ; Copyright (c) 2026 Timo Heimonen <timo.heimonen@proton.me>
 ; Licensed under the MIT License. See the LICENSE file for details.
 ;
@@ -65,17 +65,37 @@ steel_input:
 .done:  movem.l (sp)+,d0-d3
         rts
 
-; D0/D1: one corner (column, row), D2/D3: the other. Make the area inside the
-; grid, at most 16 cells each way from the first corner, and add it.
-steel_add:
-        movem.l d0-d7/a0,-(sp)
-        cmp.w d0,d2                     ; D0 <= D2
+; D0/D1: the first corner (column, grid row), D2/D3: the other. Return the
+; area between them in D0/D1 (first column and row) and D2/D3 (last ones):
+; at most 16 cells each way from the first corner, then inside the grid
+; (columns 0..407, rows 1..41). N set when nothing of it is inside.
+; Clobbers D4.
+steel_corners:
+        move.w d0,d4                    ; the other corner within 15 cells
+        sub.w #15,d4
+        cmp.w d4,d2
+        bge.s .left
+        move.w d4,d2
+.left:  add.w #30,d4
+        cmp.w d4,d2
+        ble.s .rows
+        move.w d4,d2
+.rows:  move.w d1,d4
+        sub.w #15,d4
+        cmp.w d4,d3
+        bge.s .top
+        move.w d4,d3
+.top:   add.w #30,d4
+        cmp.w d4,d3
+        ble.s .order
+        move.w d4,d3
+.order: cmp.w d0,d2                     ; D0 <= D2
         bge.s .cols
         exg d0,d2
 .cols:  cmp.w d1,d3
-        bge.s .rows
+        bge.s .grid
         exg d1,d3
-.rows:  tst.w d0
+.grid:  tst.w d0
         bpl.s .x0
         moveq #0,d0
 .x0:    cmp.w #GRID_WIDTH-1,d2
@@ -87,17 +107,24 @@ steel_add:
 .y0:    cmp.w #GRID_ROWS-1,d3
         ble.s .y1
         moveq #GRID_ROWS-1,d3
-.y1:    sub.w d0,d2                     ; width - 1
+.y1:    cmp.w d0,d2
+        blt.s .none
+        cmp.w d1,d3
+        blt.s .none
+        moveq #0,d4                     ; N clear
+        rts
+.none:  moveq #-1,d4
+        rts
+
+; D0/D1: the first corner (column, row), D2/D3: the other. Add the area
+; between them (steel_corners).
+steel_add:
+        movem.l d0-d7/a0,-(sp)
+        bsr.s steel_corners
         bmi.s .done
+        sub.w d0,d2                     ; width - 1
         sub.w d1,d3                     ; height - 1
-        bmi.s .done
-        cmp.w #15,d2
-        bls.s .w
-        moveq #15,d2
-.w:     cmp.w #15,d3
-        bls.s .h
-        moveq #15,d3
-.h:     lea custom_record+$760(pc),a0
+        lea custom_record+$760(pc),a0
         moveq #31,d4
 .free:  tst.l (a0)
         beq.s .store
@@ -193,15 +220,15 @@ steel_draw:
         asr.w #2,d3
         tst.b steel_drag(a4)
         beq.s .cursor
-        move.w drag_col(a4),d4
-        move.w drag_row(a4),d5
-        cmp.w d2,d4
-        bge.s .cols
-        exg d2,d4
-.cols:  cmp.w d3,d5
-        bge.s .rows
-        exg d3,d5
-.rows:  bsr.s steel_cells
+        move.w drag_col(a4),d0          ; the area the release would add
+        move.w drag_row(a4),d1
+        bsr steel_corners
+        bmi.s .done
+        move.w d2,d4
+        move.w d3,d5
+        move.w d0,d2
+        move.w d1,d3
+        bsr.s steel_cells
         bra.s .done
 .cursor:
         cmpi.w #160,($9dac).l

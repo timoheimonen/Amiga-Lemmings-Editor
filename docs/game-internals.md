@@ -41,12 +41,12 @@ game.
 | `$29(A5)`, `$2D(A5)` | Level-end state; the game's Esc action `$1598` sets `$29(A5)` |
 | `$30(A5)` | Two-player mode |
 | `$3C(A5)` | Negative while the two-player panel is loaded |
-| `$7E(A5)`, `$80(A5)` | Position of the two-player marker (the first object of type 2) |
+| `$7E(A5)`, `$80(A5)` | Position of the two-player marker (the first slot of type 2, also an empty one) |
 | `$104(A5)`, `$106(A5)` | Two players: lemmings saved in the last level (green, blue), added to the next level's 40 |
 | `$110(A5)`, `$112(A5)` | Two players: won levels (blue, green) |
 | `$39(A5)` | Pause flag. Freezes lemmings, releases, object animations and the clock, while mouse and display keep running |
 | `$3E(A5)` | Frame timing counter of the main loop |
-| `$42(A5)` | Selected level number; for a custom level its list number mod 17, which chooses the tune |
+| `$42(A5)` | Selected level number; for a custom level its number in the list (on a level disk its slot) mod 17, which chooses the tune; the list restores the title screen's value when it closes |
 | `$5C(A5)` | Release counter; the editor opens before the first lemming is released |
 | `$76(A5)` | Cached level bank; set to -1 so the next level is copied again |
 | `$AA(A5)` | Rating (0..3); CUSTOM is not one of them; it exists only in the editor |
@@ -114,8 +114,9 @@ Object descriptors are at style +`$70`, `$22` bytes each, up to the first
 empty one (12 types, 11 in style 2). A descriptor with a trigger code (`$18`:
 exits, traps, water, one-way walls) gets trigger cells only in the first 16
 object slots (`$2476`); the editor places such objects there and other
-objects from slot 16 on. `$2D02` collects the entrances (type 1) of all 32
-slots into four entries with no bound, so a level has at most four. The game
+objects from slot 16 on. `$2D02` collects every slot of type 1 into four
+entries with no bound, testing only the type word, so empty slots count too
+and a level has at most four such slots. The game
 draws an object frame with `$704C`, using the record's flags.
 
 ## Attribute grid

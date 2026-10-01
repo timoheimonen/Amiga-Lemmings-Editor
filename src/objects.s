@@ -1,4 +1,4 @@
-; Lemmings In-Game Level Editor V2.1
+; Lemmings In-Game Level Editor V2.1.1
 ; Copyright (c) 2026 Timo Heimonen <timo.heimonen@proton.me>
 ; Licensed under the MIT License. See the LICENSE file for details.
 ;
@@ -16,7 +16,9 @@
 ; slots 16..31, or of the first 16 when these are full. A position must stay
 ; inside the game's limits: x > 0 (x = 0 is an empty slot), y >= 0 and, in the
 ; first 16 slots, the trigger area inside the attribute grid; at most four
-; entrances. After every change level_apply sets the game up from the record.
+; entrances. The top must also be above the panel (y < 160), so that the
+; object can be selected again. After every change level_apply sets the game
+; up from the record.
 ;
 ; The game draws each object with its record position as x - scroll and y in
 ; the view's back buffer ($23D8, $2414); the preview uses the same blitter
@@ -123,6 +125,7 @@ object_input:
         clr.l 0(a1,d0.w)                ; delete it
         clr.l 4(a1,d0.w)
         bsr level_apply
+        move.w #-1,obj_hover(a4)        ; no longer under the cursor
 .left:  btst #6,$bfe001
         seq d0
         cmp.b last_left(a4),d0
@@ -206,12 +209,10 @@ object_place:
         movea.l a0,a2
         cmp.w #1,obj_type(a4)           ; type 1 is an entrance
         bne.s .slot
-        lea custom_record+$20(pc),a1
-        moveq #31,d1
+        lea custom_record+$20(pc),a1    ; every slot of type 1 counts, as
+        moveq #31,d1                    ; for the game's entrance table
         moveq #0,d2
 .entrance:
-        tst.w (a1)
-        beq.s .other
         cmpi.w #1,4(a1)
         bne.s .other
         addq.w #1,d2
@@ -269,12 +270,13 @@ object_place:
         bsr level_apply
 .done:  rts
 
-; M: put the two-player marker (object type 2, the first one is the game's
-; marker, $2D80) beside the exit under the cursor, where the game's own
-; two-player levels have it: 16 pixels right of and 24 above the exit, which
-; makes that exit the green player's (two_player_level). The first object of
-; type 2 moves there; without one, a new one takes a free slot from 16 on (it
-; has no trigger area), then of the first 16.
+; M: put the two-player marker (object type 2; the game's marker is the
+; first slot of type 2, empty or not, $2D80) beside the exit under the cursor,
+; where the game's own two-player levels have it: 16 pixels right of and 24
+; above the exit, which makes that exit the green player's
+; (two_player_level). The first slot of type 2 moves there; without one, a new
+; one takes a free slot from 16 on (it has no trigger area), then of the
+; first 16.
 object_marker:
         movem.l d0-d4/a0-a2,-(sp)
         move.w obj_hover(a4),d0
@@ -282,6 +284,8 @@ object_marker:
         lea custom_record+$20(pc),a1
         lsl.w #3,d0
         lea 0(a1,d0.w),a2
+        tst.w (a2)                      ; deleted since the cursor was on it
+        beq .done
         move.w 4(a2),d0
         bsr object_desc
         cmpi.w #1,$18(a0)               ; an exit
@@ -296,11 +300,9 @@ object_marker:
 .marker:
         move.w d3,d4
         lsl.w #3,d4
-        tst.w 0(a1,d4.w)
-        beq.s .other
         cmpi.w #2,4(a1,d4.w)
         beq.s .put
-.other: addq.w #1,d3
+        addq.w #1,d3
         cmp.w #32,d3
         blo.s .marker
         moveq #16,d3
@@ -325,15 +327,13 @@ object_marker:
         bne.s .done
         bsr object_undo
         lea 0(a1,d4.w),a0
-        move.w d0,(a0)+
-        move.w d1,(a0)+
-        tst.w (a0)
-        beq.s .type
-        cmp.w (a0),d2
-        beq.s .apply
-.type:  move.w d2,(a0)+                 ; a new marker
-        move.w #$000f,(a0)
-.apply: bsr level_apply
+        tst.w (a0)                      ; an empty slot becomes a marker
+        bne.s .move                     ; drawn normally
+        move.w d2,4(a0)
+        move.w #$000f,6(a0)
+.move:  move.w d0,(a0)+
+        move.w d1,(a0)
+        bsr level_apply
 .done:  movem.l (sp)+,d0-d4/a0-a2
         rts
 
@@ -445,13 +445,16 @@ object_snap:
 .keep:  movem.l (sp)+,d2-d7/a0-a3
 .done:  rts
 
-; D0/D1: position, D2: type, D3: slot. Z set when the object fits there.
+; D0/D1: position, D2: type, D3: slot. Z set when the object fits there:
+; its top inside the rows of the view, where it can be selected again.
 object_fits:
         movem.l d0-d2/a0,-(sp)
         tst.w d0
         ble.s .bad
         tst.w d1
         bmi.s .bad
+        cmp.w #160,d1
+        bge.s .bad
         cmp.w #16,d3
         bhs.s .good
         move.w d0,-(sp)

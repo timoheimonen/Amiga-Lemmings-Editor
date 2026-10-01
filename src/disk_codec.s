@@ -1,4 +1,4 @@
-; Lemmings In-Game Level Editor V2.1
+; Lemmings In-Game Level Editor V2.1.1
 ; Copyright (c) 2026 Timo Heimonen <timo.heimonen@proton.me>
 ; Licensed under the MIT License. See the LICENSE file for details.
 ;
@@ -147,7 +147,8 @@ mfm_decode_track:
         rol.l #8,d0
         cmp.b d6,d0
         bne .bad
-        move.w d4,d0
+        moveq #0,d0                     ; the sector number alone: it is an
+        move.w d4,d0                    ; address offset below
         lsr.w #8,d0
         cmp.w #11,d0
         bhs .bad

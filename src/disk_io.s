@@ -1,4 +1,4 @@
-; Lemmings In-Game Level Editor V2.1
+; Lemmings In-Game Level Editor V2.1.1
 ; Copyright (c) 2026 Timo Heimonen <timo.heimonen@proton.me>
 ; Licensed under the MIT License. See the LICENSE file for details.
 ;
@@ -212,13 +212,16 @@ disk_select:
         moveq #DISK_CANCELLED,d0
         rts
 
-; D0: track, A1: decoded destination. Preserve A1 and D7. The output is only
-; valid on success; public read clears it on any error. All seeks are bounded.
+; D0: track, A1: decoded destination. Preserve A1, D6 and D7. The output is
+; only valid on success; public read clears it on any error. All seeks are
+; bounded. A track that does not decode is read up to three times.
 disk_read_decoded:
         bsr.s disk_seek_track
         tst.l d0
         bne.s .done
-        move.l a1,-(sp)
+        move.l d6,-(sp)
+        moveq #2,d6                     ; further attempts
+.try:   move.l a1,-(sp)
         move.w #$7f00,$9e(a6)
         move.w #$9500,$9e(a6)     ; MFMPREC, WORDSYNC, FAST
         move.w #$4489,$7e(a6)
@@ -227,16 +230,19 @@ disk_read_decoded:
         bsr disk_dma
         movea.l (sp)+,a1
         tst.l d0
-        bne.s .done
+        bne.s .end
         movea.l disk_raw(a4),a0
         move.l #MFM_READ_BYTES-2,d1 ; exclude Paula's possibly missing last word
         moveq #0,d0
         move.w disk_track_no(a4),d0
         bsr mfm_decode_track
         tst.l d0
-        bne.s .bad
-        bra disk_check_media
-.bad:   moveq #DISK_READ_ERROR,d0
+        beq.s .read
+        dbra d6,.try
+        moveq #DISK_READ_ERROR,d0
+        bra.s .end
+.read:  bsr disk_check_media
+.end:   move.l (sp)+,d6
 .done:  rts
 
 ; D0: track. Step to its cylinder, select its side, let the head settle and
