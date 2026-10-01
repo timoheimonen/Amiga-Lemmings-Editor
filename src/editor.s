@@ -1,4 +1,4 @@
-; Lemmings In-Game Level Editor V2.0
+; Lemmings In-Game Level Editor V2.1
 ; Copyright (c) 2026 Timo Heimonen <timo.heimonen@proton.me>
 ; Licensed under the MIT License. See the LICENSE file for details.
 ;
@@ -56,7 +56,9 @@ origin_y        rs.w 1
 origin_q        rs.w 1              ; destination byte column of the piece's left edge
 source_y        rs.w 1
 row_stride      rs.w 1
-dest_height     rs.w 1
+clip_top        rs.w 1              ; first writable destination row
+undo_brush      rs.w 3              ; the brush kept while undo redraws pieces
+clip_rows       rs.w 1              ; number of writable rows
 clip_lo         rs.w 1              ; first writable destination byte column
 clip_span       rs.w 1              ; number of writable byte columns
 last_x          rs.w 1              ; cursor and scroll of the last redraw
@@ -153,6 +155,11 @@ shown_snap      rs.b 1
 behind          rs.b 1              ; the brush draws behind the terrain
 pending_behind  rs.b 1              ; B pressed
 pending_marker  rs.b 1              ; M pressed
+pending_undo    rs.b 1              ; U pressed: 1 undo, 2 redo (with shift)
+undo_count      rs.b 1              ; entries that can be undone (undo.s)
+redo_count      rs.b 1              ; entries after them that can be redone
+undo_open       rs.b 1              ; a range was taken for an edit in progress
+delete_mode     rs.b 1              ; Shift in the erasing mode: deleting pieces (delete.s)
 key_queue       rs.b 16             ; raw key codes for the menu and the list
 menu_line       rs.b 42             ; a text line
         rseven
@@ -221,6 +228,8 @@ capture:
         clr.b behind(a4)
         clr.b pending_behind(a4)
         clr.b pending_marker(a4)
+        clr.b pending_undo(a4)
+        clr.b delete_mode(a4)
         clr.w flipped(a4)       ; orientation and queued F press
         clr.w pending_toggle(a4)
         clr.b pending_menu(a4)
@@ -228,6 +237,8 @@ capture:
         clr.l paint_count(a4)
         clr.b steel_drag(a4)
         clr.b obj_drag(a4)
+        clr.b undo_open(a4)             ; a drag's range, taken when it began
+        bsr undo_break                  ; a change after a test play is a new step
         move.w #-1,obj_hover(a4)
         clr.b pending_mode(a4)
         clr.b pending_select(a4)
@@ -392,6 +403,11 @@ frame:
         clr.w $3e(a5)
         jmp $646
 .editor_input:
+        move.b pending_undo(a4),d0      ; U: undo, Shift+U: redo
+        beq.s .behind_key
+        clr.b pending_undo(a4)
+        bsr undo_key
+.behind_key:
         tst.b pending_behind(a4)        ; B: the brush draws behind the terrain
         beq.s .snap_key
         clr.b pending_behind(a4)
@@ -488,6 +504,7 @@ frame:
         bsr scroll
         bsr coordinates
         bsr descriptor
+        bsr delete_update
         move.b edit_mode(a4),d0
         beq.s .pieces
         subq.b #2,d0
@@ -515,7 +532,13 @@ frame:
         move.b d0,last_left(a4)
         tst.b d0
         beq .done
-        bsr brush_snap                  ; where the preview shows the piece
+        tst.b delete_mode(a4)           ; Shift while erasing: delete a piece
+        beq.s .place
+        cmpi.w #160,$9dac
+        bhs .done
+        bsr piece_delete
+        bra .done
+.place: bsr brush_snap                  ; where the preview shows the piece
         cmpi.w #160,$9dac
         bhs .done
         tst.w remaining(a4)
@@ -534,6 +557,7 @@ frame:
         jsr $4b3a
         jsr $4a78
         addq.l #1,paint_count(a4)
+        bsr undo_piece
         st dirty(a4)
 .done:  tst.b active(a4)
         beq.s .game
@@ -981,6 +1005,11 @@ overlay:
         bra.s .status
 .brush: cmpi.w #160,$9dac
         bhs.s .status
+        tst.b delete_mode(a4)           ; deleting: the cursor and an outline
+        beq.s .preview
+        bsr piece_outline
+        bra.s .status
+.preview:
         bsr brush_snap
         move.w brush_x(a4),d0           ; into the back buffer
         sub.w $9da8,d0
@@ -1001,7 +1030,9 @@ overlay:
         jmp $690
 
 ; CPU masked compositor. D0/D1 identify the cursor in the target surface and
-; D2 selects the target: 0 = world terrain, 1 = viewport back buffer (preview).
+; D2 selects the target: 0 = world terrain, 1 = viewport back buffer (preview),
+; 2 = world terrain inside the window clip_lo/clip_span (byte columns) and
+; clip_top/clip_rows set by the caller.
 ; The piece is centred on the cursor; for odd dimensions the middle pixel is
 ; the anchor. The unclamped origin is kept so clipping crops the shape without
 ; shifting it. Collision guard rows are cleared later by the caller.
@@ -1025,12 +1056,15 @@ composite:
         sub.w d3,d1
         move.w d0,origin_x(a4)
         move.w d1,origin_y(a4)
-        tst.w d2
-        bne.s .preview
+        cmp.w #1,d2
+        beq.s .preview
         move.l #$37080,dest_ptr(a4)
         move.l #$85e0,dplane(a4)
         move.w #204,row_stride(a4)
-        move.w #168,dest_height(a4)
+        tst.w d2
+        bne.s .setup                    ; mode 2: the caller's clip window
+        clr.w clip_top(a4)
+        move.w #168,clip_rows(a4)
         clr.w clip_lo(a4)
         move.w #204,clip_span(a4)
         bra.s .setup
@@ -1038,7 +1072,8 @@ composite:
         move.l $cc(a5),dest_ptr(a4)
         move.l #$2100,dplane(a4)
         move.w #44,row_stride(a4)
-        move.w #160,dest_height(a4)
+        clr.w clip_top(a4)
+        move.w #160,clip_rows(a4)
         move.w #2,clip_lo(a4)
         move.w #40,clip_span(a4)
 .setup: moveq #7,d5
@@ -1053,8 +1088,10 @@ composite:
         clr.w source_y(a4)
 .row:   move.w origin_y(a4),d0
         add.w source_y(a4),d0
-        cmp.w dest_height(a4),d0
-        bhs .next_row           ; unsigned compare also rejects negative rows
+        move.w d0,d3
+        sub.w clip_top(a4),d3
+        cmp.w clip_rows(a4),d3
+        bhs .next_row           ; unsigned compare also rejects rows above
         mulu row_stride(a4),d0
         movea.l dest_ptr(a4),a0
         adda.l d0,a0
@@ -1270,10 +1307,14 @@ status_values:
         lea CHIP_TEXT+0*640,a3
         move.w #32*8,d4
         bsr number
-.sign:  move.b negative(a4),d0          ; 0 add, -1 erase, 2 behind
+.sign:  move.b negative(a4),d0          ; 0 add, -1 erase, 2 behind, 3 delete
         tst.b behind(a4)
-        beq.s .sign_state
+        beq.s .deleting
         moveq #2,d0
+.deleting:
+        tst.b delete_mode(a4)
+        beq.s .sign_state
+        moveq #3,d0
 .sign_state:
         cmp.b shown_sign(a4),d0
         beq.s .flip
@@ -1286,6 +1327,9 @@ status_values:
         lea brush_erase(pc),a2
         bmi.s .brush_text
         lea brush_behind(pc),a2
+        cmp.b #2,d0
+        beq.s .brush_text
+        lea brush_delete(pc),a2
 .brush_text:
         moveq #5,d6
 .brush_char:
@@ -1294,6 +1338,14 @@ status_values:
         bsr glyph
         addq.w #8,d4
         dbra d6,.brush_char
+        lea status_rmb_add(pc),a2       ; the right button's help
+        move.b shown_sign(a4),d0
+        bmi.s .erase_help
+        cmp.b #3,d0
+        bne.s .help
+.erase_help:
+        lea status_rmb_erase(pc),a2
+.help:  bsr status_texts
 .flip:  move.b flipped(a4),d0
         cmp.b shown_flip(a4),d0
         beq.s .remaining
@@ -1421,6 +1473,7 @@ flip_on: dc.b 'On '
 brush_add: dc.b '+     '
 brush_erase: dc.b '-     '
 brush_behind: dc.b 'Behind'
+brush_delete: dc.b 'Delete'
 full_text: dc.b 'Full'
 
 ; Original 5x7 ASCII bitmap font, authored for the editor.
@@ -1537,6 +1590,8 @@ font_source:
         include "level_save.s"
         include "steel.s"
         include "objects.s"
+        include "undo.s"
+        include "delete.s"
         include "params.s"
 
 ; Runtime storage follows the file image in the reserved editor block.
@@ -1554,4 +1609,5 @@ list_path       equ list_text+600   ; WHDLoad: Levels/ and a file name
 custom_record   equ list_path+40    ; the custom level being played
 title_buf       equ custom_record+2048 ; 32 characters, NUL, and a spare NUL
 custom_file     equ title_buf+34    ; WHDLoad: the file name of the edited level
-storage_end     equ custom_file+32
+undo_entries    equ custom_file+32  ; UNDO_STEPS entries and a spare one (undo.s)
+storage_end     equ undo_entries+(UNDO_STEPS+1)*UNDO_ENTRY

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Lemmings In-Game Level Editor V2.0
+# Lemmings In-Game Level Editor V2.1
 # Copyright (c) 2026 Timo Heimonen <timo.heimonen@proton.me>
 # Licensed under the MIT License. See the LICENSE file for details.
 """Build the WHDLoad install of Lemmings with the in-game level editor.
@@ -49,10 +49,10 @@ ICON_PICTURE = '''\
 .........bbbb.bbbb........
 ........wwwww.wwwww.......
 .......wwwwww.wwwwww......'''
-# Tool types in parentheses are disabled; removing the parentheses in the
-# icon's Information window makes WHDLoad write saved levels at once
-# (see README.md).
-ICON_TOOLTYPES = ['SLAVE=Lemmings.slave', 'PRELOAD', '(NOWRITECACHE)', '(WRITEDELAY=25)']
+# NOWRITECACHE makes WHDLoad write a saved level to the hard disk at once.
+# Tool types in parentheses are disabled until the parentheses are removed in
+# the icon's Information window (see README.md).
+ICON_TOOLTYPES = ['SLAVE=Lemmings.slave', 'PRELOAD', 'NOWRITECACHE', '(WRITEDELAY=25)']
 
 
 def file_size(disk1: bytes, name: bytes) -> int:

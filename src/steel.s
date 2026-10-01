@@ -1,4 +1,4 @@
-; Lemmings In-Game Level Editor V2.0
+; Lemmings In-Game Level Editor V2.1
 ; Copyright (c) 2026 Timo Heimonen <timo.heimonen@proton.me>
 ; Licensed under the MIT License. See the LICENSE file for details.
 ;
@@ -104,7 +104,8 @@ steel_add:
         addq.l #4,a0
         dbra d4,.free
         bra.s .done                     ; 32 areas already
-.store: lsl.w #7,d0
+.store: bsr.s steel_undo
+        lsl.w #7,d0
         subq.w #1,d1
         or.w d1,d0
         move.w d0,(a0)+
@@ -114,6 +115,17 @@ steel_add:
         move.w d2,(a0)
         bsr level_apply
 .done:  movem.l (sp)+,d0-d7/a0
+        rts
+
+; Take the steel areas for undo before an edit of them. Preserves every
+; register.
+steel_undo:
+        movem.l d0-d1/a0,-(sp)
+        movea.w #$760,a0
+        move.w #$80,d0
+        moveq #0,d1
+        bsr undo_record
+        movem.l (sp)+,d0-d1/a0
         rts
 
 ; D0/D1: column and row. Remove the last area that covers the cell.
@@ -131,6 +143,7 @@ steel_remove:
         blt.s .next
         cmp.w d5,d1
         bgt.s .next
+        bsr.s steel_undo
         clr.l (a0)
         bsr level_apply
         bra.s .done

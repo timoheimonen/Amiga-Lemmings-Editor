@@ -67,7 +67,8 @@ python3 patch.py "Disk 1.adf" "Disk 2.adf" --whdload out/Lemmings
 
 Writes a WHDLoad install (slave, disk images, Workbench icon and the
 directory `Levels`) for Kickstart 2.0 or later. Custom levels are `.lvl`
-files in `Levels`; no level disk is needed. See
+files in `Levels`; no level disk is needed. Started from its icon, WHDLoad
+writes a saved level to the hard disk at once. See
 [whdload/README.md](whdload/README.md).
 
 ## Custom levels
@@ -118,6 +119,7 @@ The status block below the skill panel shows the mode, its values and keys.
 | `S` | Save the level |
 | `E` | Test play from the start; `E` or Esc during the test play returns to the editor |
 | `G` | Snap on or off: new and moved pieces and objects join the nearest one of the same kind |
+| `U` | Undo the last edit (three steps); Shift+`U` redoes it |
 | Esc | Back to the list; asks first when the level has unsaved changes |
 | Cursor at screen edge | Scroll |
 
@@ -128,8 +130,15 @@ Terrain:
 | Cursor left / right | Previous / next terrain piece |
 | LMB | Place the piece |
 | RMB | Toggle add / erase |
+| Shift + LMB while erasing | Delete the outlined piece under the cursor |
 | `F` | Flip the piece vertically |
 | `B` | Behind: draw the piece behind existing terrain |
+
+An erasing piece cuts a hole of its shape into the pieces placed before it
+and, like any piece, takes one of the level's 399 places, because the game
+draws the level from its list of pieces. To remove a piece itself, switch to
+erasing and hold Shift: the brush is hidden, the piece under the cursor is
+outlined (an erasing piece too), and LMB deletes it, which frees its place.
 
 Steel areas: drag with LMB to add an area (up to 16 x 16 cells of 4 x 4
 pixels, 32 areas); RMB removes the area under the cursor.
@@ -189,12 +198,13 @@ icon (`whdload/build.py`), and embeds everything in the generated section of
   of custom levels and starts them through the game's own level start,
   briefing and result screens, for two players in the game's own two-player
   mode.
-- `src/editor.s` hooks the main loop, keyboard interrupt and level setup. It
-  freezes the level through the game's own pause flag, paints terrain pieces
-  straight into the live terrain and draws a status block below the skill
-  panel via a copper list extension. `src/steel.s`, `src/objects.s` and
-  `src/params.s` edit the steel areas, the objects and the parameters and set
-  the game up again from the level record after every change.
+- `src/editor.s` hooks the main loop, keyboard interrupt and level setup,
+  draws terrain pieces into the level's terrain and shows a status block
+  below the skill panel via a copper list extension. `src/steel.s`,
+  `src/objects.s` and `src/params.s` edit the steel areas, the objects and the
+  parameters and set the game up again from the level record after every
+  change. `src/undo.s` keeps the undo history and rebuilds the terrain under a
+  removed piece; `src/delete.s` deletes whole pieces.
 - `src/level_save.s` checks and saves the level, `src/menu.s` is the menu
   for the title, disk prompts and messages, and `src/disk_io.s` and
   `src/disk_codec.s` read and write the level disk directly through the disk

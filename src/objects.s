@@ -1,4 +1,4 @@
-; Lemmings In-Game Level Editor V2.0
+; Lemmings In-Game Level Editor V2.1
 ; Copyright (c) 2026 Timo Heimonen <timo.heimonen@proton.me>
 ; Licensed under the MIT License. See the LICENSE file for details.
 ;
@@ -117,6 +117,7 @@ object_input:
         bne.s .left
         move.w obj_hover(a4),d0
         bmi.s .left
+        bsr object_undo
         lea custom_record+$20(pc),a1
         lsl.w #3,d0
         clr.l 0(a1,d0.w)                ; delete it
@@ -134,6 +135,7 @@ object_input:
         move.w obj_hover(a4),d0
         bmi.s .place
         ; Pressed on an object: drag it.
+        bsr object_undo                 ; dropped where it was, nothing to undo
         move.b d0,obj_drag(a4)
         addq.b #1,obj_drag(a4)
         lea custom_record+$20(pc),a1
@@ -256,6 +258,7 @@ object_place:
         move.w (sp)+,d3
         bsr object_fits
         bne.s .done
+        bsr object_undo
         move.w d3,d4
         lsl.w #3,d4
         adda.w d4,a1
@@ -320,6 +323,7 @@ object_marker:
 .put:   moveq #2,d2
         bsr object_fits
         bne.s .done
+        bsr object_undo
         lea 0(a1,d4.w),a0
         move.w d0,(a0)+
         move.w d1,(a0)+
@@ -331,6 +335,16 @@ object_marker:
         move.w #$000f,(a0)
 .apply: bsr level_apply
 .done:  movem.l (sp)+,d0-d4/a0-a2
+        rts
+
+; Take the objects for undo before an edit of them. Preserves every register.
+object_undo:
+        movem.l d0-d1/a0,-(sp)
+        movea.w #$20,a0
+        move.w #$100,d0
+        moveq #0,d1
+        bsr undo_record
+        movem.l (sp)+,d0-d1/a0
         rts
 
 ; The dragged object is released: keep its new position if it fits there,
