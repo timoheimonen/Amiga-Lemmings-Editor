@@ -1,4 +1,4 @@
-# Amiga Lemmings (1991) In-Game Level Editor for 1P and 2P Levels
+# Amiga Lemmings (1991) Integrated Level Editor for 1P and 2P Levels
 
 A patch that adds custom levels to Amiga Lemmings (1991): an in-game level
 editor that runs natively on the Amiga, inside the original game and its
