@@ -1,4 +1,4 @@
-; Lemmings In-Game Level Editor V2.1.1
+; Lemmings In-Game Level Editor V2.2
 ; Copyright (c) 2026 Timo Heimonen <timo.heimonen@proton.me>
 ; Licensed under the MIT License. See the LICENSE file for details.
 ;
@@ -27,6 +27,7 @@ VIEW_PALETTE    equ $850e               ; copper value word of COLOR00
 KEY_RETURN      equ $44
 KEY_ENTER       equ $43
 KEY_ESC         equ $45
+KEY_DEL         equ $46
 KEY_BACKSPACE   equ $41
 KEY_UP          equ $4c
 KEY_DOWN        equ $4d

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Lemmings In-Game Level Editor V2.1.1
+# Lemmings In-Game Level Editor V2.2
 # Copyright (c) 2026 Timo Heimonen <timo.heimonen@proton.me>
 # Licensed under the MIT License. See the LICENSE file for details.
 """Build the WHDLoad install of Lemmings with the in-game level editor.

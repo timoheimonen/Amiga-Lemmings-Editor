@@ -1,4 +1,4 @@
-; Lemmings In-Game Level Editor V2.1.1
+; Lemmings In-Game Level Editor V2.2
 ; Copyright (c) 2026 Timo Heimonen <timo.heimonen@proton.me>
 ; Licensed under the MIT License. See the LICENSE file for details.
 ;
@@ -30,6 +30,7 @@ CHIP_COPPER     equ $22c00
 TEXT_BYTES      equ 3840
 TRACK_BYTES     equ 11*512
 MAX_PLACEMENTS  equ 399               ; terrain pieces of a level: the list needs an end marker
+DELETED_MAX     equ 32                ; WHDLoad: names deleted in this session (level_delete.s)
 
 ; Editor state, relative to "state".
         rsreset
@@ -43,6 +44,7 @@ dest_ptr        rs.l 1              ; destination surface base
 disk_raw        rs.l 1              ; raw MFM buffer of a transfer
 menu_msg        rs.l 1              ; message shown by the menu
 saved_crc       rs.l 1              ; CRC-32 of custom_record as loaded or last saved
+delete_crc      rs.l 1              ; CRC-32 of the slot asked about for deletion (floppy)
 piece_id        rs.w 1
 piece_count     rs.w 1
 brush_x         rs.w 1              ; cursor in level coordinates
@@ -106,6 +108,10 @@ snap_reach_y    rs.w 1
 snap_key        rs.w 1              ; mask of snap_xs..snap_ye: piece + 1, $100 + object type, 0 none
 palette_save    rs.w 5              ; view colours replaced by the menu
 list_palette_rows rs.w 13           ; palette number of each text row of the list
+        ifd WHDLOAD
+deleted_names   rs.l DELETED_MAX      ; hashes of the file names deleted in this session
+deleted_count   rs.w 1
+        endif
 active          rs.b 1              ; the editor is open
 negative        rs.b 1              ; the brush erases
 last_left       rs.b 1              ; mouse buttons of the last frame
@@ -1610,6 +1616,7 @@ font_source:
         include "title.s"
         include "levels.s"
         include "level_save.s"
+        include "level_delete.s"
         include "steel.s"
         include "objects.s"
         include "undo.s"

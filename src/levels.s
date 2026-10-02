@@ -1,4 +1,4 @@
-; Lemmings In-Game Level Editor V2.1.1
+; Lemmings In-Game Level Editor V2.2
 ; Copyright (c) 2026 Timo Heimonen <timo.heimonen@proton.me>
 ; Licensed under the MIT License. See the LICENSE file for details.
 ;
@@ -90,7 +90,8 @@ level_list_return:
         bsr list_search
 
 ; The list's input loop, for the levels and for the graphics styles of a new
-; level. D0 from the key and mouse handlers: -1 leave, 1 play, 2 edit.
+; level. D0 from the key and mouse handlers: -1 leave, 1 play, 2 edit,
+; 3 delete.
 list_loop:
 .loop:  jsr $196a
         bsr menu_next_key
@@ -104,6 +105,8 @@ list_loop:
 .act:   tst.w d0
         bmi.s .leave
         beq.s .loop
+        cmp.w #3,d0
+        beq.s .delete
         tst.b list_mode(a4)
         bne list_new_level
         move.w d0,d6
@@ -113,16 +116,16 @@ list_loop:
         bne.s .loop
 .load:  bsr list_load_level
         tst.l d0
-        bne.s .unreadable
+        bne list_failed
         cmp.w #2,d6
         beq list_edit
         bra list_play
-.unreadable:
-        bsr list_message
-        bsr list_buttons
-        st list_retry(a4)
-        clr.w list_count(a4)
-        bra.s .loop
+.delete:
+        tst.b list_mode(a4)             ; not in the styles of New Level
+        bne.s .loop
+        tst.b list_players(a4)          ; nor for two players, like E
+        bne.s .loop
+        bra list_delete
 .leave:
         ifnd WHDLOAD
         ; The title screen and the game's own levels load files by the
@@ -152,6 +155,16 @@ list_loop:
         jsr $2c7e                       ; reload Icons, as the game does after a level
 .title: lea (GAME_ROWS).l,a4             ; the game's A4 throughout
         jmp $554
+
+; A0: message. Show it with the hint that a click looks for the levels
+; again, and continue in the list's input loop.
+list_failed:
+        lea txt_list_again(pc),a3
+        bsr list_message_more
+        bsr list_buttons
+        st list_retry(a4)
+        clr.w list_count(a4)
+        bra list_loop
 
 ; Give the keys and the text mode back to the game.
 list_close:
@@ -669,8 +682,8 @@ list_entry:
         add.w list_sel(a4),d0
         rts
 
-; Find the levels and show the current page (the first one if the current
-; page no longer exists), or a message.
+; Find the levels and show the current page, or a message. A selection
+; beyond the last level (fewer levels than before) moves to the last one.
 list_search:
         lea txt_list_searching(pc),a0
         bsr list_message
@@ -686,8 +699,13 @@ list_search:
         bsr list_entry
         cmp.w list_count(a4),d0
         blo.s .show
-        clr.w list_page(a4)
-        clr.w list_sel(a4)
+        move.w list_count(a4),d0
+        subq.w #1,d0
+        ext.l d0
+        divu #LIST_ROWS,d0
+        move.w d0,list_page(a4)
+        swap d0
+        move.w d0,list_sel(a4)
 .show:  bsr list_show
         bra.s list_buttons
 .message:
@@ -702,12 +720,15 @@ list_buttons:
         seq last_right(a4)
         rts
 
-; D0: raw key. Cursor keys move the selection and turn pages; Return plays
-; the selected level (D0 returns 1), otherwise D0 returns 0.
+; D0: raw key. Cursor keys move the selection and turn pages. D0 returns 1
+; for Return (play), 2 for E (edit), 3 for Del (delete), otherwise 0, and 0
+; also when the list has no levels.
 list_key:
         bsr.s .key
         cmp.b #KEY_E,d0
         beq.s .edit
+        cmp.b #KEY_DEL,d0
+        beq.s .delete
         bsr menu_is_return
         seq d0
         and.w #1,d0
@@ -717,6 +738,9 @@ list_key:
 .play:  tst.w d0
         rts
 .edit:  moveq #2,d0
+        bra.s .count
+.delete:
+        moveq #3,d0
         bra.s .count
 .key:   move.w d0,-(sp)
         bsr.s list_move
@@ -958,6 +982,14 @@ list_default_palettes:
 
 ; A0: message (rows separated by $0A). Show it below the heading.
 list_message:
+        move.l a3,-(sp)
+        suba.l a3,a3
+        bsr.s list_message_more
+        movea.l (sp)+,a3
+        rts
+
+; A0: message, A3: a further message from the row after it, or 0.
+list_message_more:
         movem.l d0-d7/a0-a3,-(sp)
         movea.l a0,a2
         bsr list_screen
@@ -972,11 +1004,15 @@ list_message:
 .line:  move.b #2,(a1)+
         move.b d1,(a1)+
 .char:  move.b (a2)+,d0
-        beq.s .last
+        beq.s .end
         cmp.b #$0a,d0
         beq.s .next
         move.b d0,(a1)+
         bra.s .char
+.end:   move.l a3,d0
+        beq.s .last
+        movea.l a3,a2
+        suba.l a3,a3
 .next:  clr.b (a1)+
         addq.w #1,d1
         bra.s .line
@@ -1051,20 +1087,10 @@ list_show:
         subq.w #1,d1
 .level: move.b #2,(a1)+
         move.b d4,(a1)+
-        ifd WHDLOAD
-        move.w d3,d5                    ; the list entry
-        else
-        lea level_slots(pc),a0
-        move.w d3,d0
-        add.w d0,d0
-        move.w 0(a0,d0.w),d5            ; the slot
-        endif
+        bsr list_status_entry
         tst.b list_mode(a4)
         bne.s .name
-        move.w d5,d0
-        addq.w #1,d0
-        bsr list_format3
-        move.b #' ',(a1)+
+        bsr list_number
 .name:  bsr list_title
         clr.b (a1)+
         addq.w #1,d3
@@ -1091,6 +1117,28 @@ list_show:
         bsr list_pointer_row
         move.w d0,list_hover(a4)
         movem.l (sp)+,d0-d7/a0-a3
+        rts
+
+; D3: list entry. D5 returns its entry in level_status and level_titles: the
+; slot on floppy, the list entry under WHDLoad.
+list_status_entry:
+        move.w d3,d5
+        ifnd WHDLOAD
+        move.l a0,-(sp)
+        lea level_slots(pc),a0
+        add.w d5,d5
+        move.w 0(a0,d5.w),d5
+        movea.l (sp)+,a0
+        endif
+        rts
+
+; D5: slot (floppy) or list entry (WHDLoad). Append the number the list shows
+; for it (three digits) and a space to A1. D0 is changed.
+list_number:
+        move.w d5,d0
+        addq.w #1,d0
+        bsr list_format3
+        move.b #' ',(a1)+
         rts
 
 ; D5: slot (floppy) or list entry (WHDLoad). Append its 32-character title
@@ -1374,6 +1422,8 @@ list_find_files:
         or.l #$00202020,d0              ; ".LVL" and ".lvl"
         cmp.l #'.lvl',d0
         bne.s .skip
+        bsr list_deleted                ; still listed by the write cache
+        bne.s .skip
         bsr list_insert_name
 .skip:  movea.l a1,a0
 .more:  subq.l #1,d3
@@ -1510,13 +1560,7 @@ list_read_level:
         lea install(pc),a0
         adda.l #LIST_NAMES,a0
         adda.w d0,a0
-        lea list_path(pc),a1
-        lea levels_dir(pc),a2
-.dir:   move.b (a2)+,(a1)+
-        bne.s .dir
-        move.b #'/',-1(a1)
-.name:  move.b (a0)+,(a1)+
-        bne.s .name
+        bsr.s list_name_path
         bsr file_mailbox
         bne.s .damaged
         lea list_path(pc),a0
@@ -1535,6 +1579,21 @@ list_read_level:
         lea level_status(pc),a0
         move.b #LS_DAMAGED,0(a0,d6.w)
 .done:  movem.l (sp)+,d0-d7/a0-a3
+        rts
+
+; A0: file name. Put Levels/ and the name into list_path. A0 returns
+; list_path; A1 is changed.
+list_name_path:
+        move.l a0,-(sp)
+        lea list_path(pc),a1
+        lea levels_dir(pc),a0
+.dir:   move.b (a0)+,(a1)+
+        bne.s .dir
+        move.b #'/',-1(a1)
+        movea.l (sp)+,a0
+.name:  move.b (a0)+,(a1)+
+        bne.s .name
+        lea list_path(pc),a0
         rts
 
 levels_dir:
@@ -1561,15 +1620,18 @@ list_read_level:
 .slot:  lea level_status(pc),a0
         tst.b 0(a0,d6.w)
         bne.s .known
-        lea install(pc),a0
-        adda.l #DISK_TRACK,a0
-        move.w d6,d0
-        and.w #1,d0
-        mulu #LEVEL_SLOT_SIZE,d0
-        adda.w d0,a0
         tst.l d7
         bne.s .bad
-        ; The record is followed by zero padding.
+        move.w d6,d0
+        bsr.s slot_in_track
+        bra.s list_take_slot
+.bad:   move.b #LS_DAMAGED,0(a0,d6.w)
+.known: rts
+
+; A0: a slot of a track read without errors, D6: its level_status entry.
+; Record its title when it holds a level that passes the checks, followed
+; by zero padding; otherwise mark it damaged.
+list_take_slot:
         lea LEVEL_SIZE(a0),a1
         move.w #(LEVEL_SLOT_SIZE-LEVEL_SIZE)/4-1,d0
 .pad:   tst.l (a1)+
@@ -1578,7 +1640,16 @@ list_read_level:
         bra list_take_level
 .bad:   lea level_status(pc),a0
         move.b #LS_DAMAGED,0(a0,d6.w)
-.known: rts
+        rts
+
+; D0: slot. A0 returns its place in the track read into DISK_TRACK.
+slot_in_track:
+        lea install(pc),a0
+        adda.l #DISK_TRACK,a0
+        btst #0,d0
+        beq.s .done
+        adda.w #LEVEL_SLOT_SIZE,a0
+.done:  rts
         endif
 
 ; Load the selected level into custom_record and check it. Return 0, or D0
@@ -1965,15 +2036,15 @@ level_disk_header:
 txt_list_head:          dc.b 13,0,'Custom levels',0,$ff
 txt_list_head_two:      dc.b 8,0,'Two-player custom levels',0,$ff
 txt_list_back:          dc.b 5,12,'Right mouse button to go back',0,$ff
-txt_list_help:          dc.b 0,12,'Click plays, E edits, right button back',0,$ff
+txt_list_help:          dc.b 3,12,'Click plays, E edits, Del deletes',0,$ff
 txt_list_help_two:      dc.b 5,12,'Click plays, right button back',0,$ff
 txt_new_head:           dc.b 11,0,'New level style',0,$ff
 txt_new_help:           dc.b 2,12,'Click a style  Right button back',0,$ff
 txt_list_page:          dc.b '< Page ',0
 txt_list_of:            dc.b ' of ',0
 txt_list_damaged:       dc.b '(damaged level)',0
-txt_list_unplayable:    dc.b 'This level cannot be read or played.',$0a
-                        dc.b 'Click to look for the levels again.',0
+txt_list_unplayable:    dc.b 'This level cannot be read or played.',0
+txt_list_again:         dc.b 'Click to look for the levels again.',0
 txt_list_searching:     dc.b 'Looking for the level disk...',0
 txt_list_index:         dc.b 'The index of the level disk is',$0a
                         dc.b 'damaged. Repair it with savedisk.py',$0a

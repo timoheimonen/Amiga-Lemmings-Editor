@@ -1,4 +1,4 @@
-; Lemmings In-Game Level Editor V2.1.1
+; Lemmings In-Game Level Editor V2.2
 ; Copyright (c) 2026 Timo Heimonen <timo.heimonen@proton.me>
 ; Licensed under the MIT License. See the LICENSE file for details.
 ;
@@ -57,7 +57,7 @@ expmem:
 
 name:   dc.b "Lemmings",0
 copy:   dc.b "1991 DMA Design / Psygnosis",0
-info:   dc.b "In-Game Level Editor V2.1.1",10
+info:   dc.b "In-Game Level Editor V2.2",10
         dc.b "by Timo Heimonen",0
         even
 

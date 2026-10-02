@@ -62,5 +62,6 @@ The editor on the WHDLoad disk images is assembled with `WHDLOAD` defined:
   resload base) instead of the floppy disk transport; the MFM codec is left
   out.
 - The custom levels are the `.lvl` files of `Levels`, listed with
-  `resload_ListFiles`, read with `resload_LoadFile` and written with
-  `resload_SaveFile`; there are no drive searches or disk prompts.
+  `resload_ListFiles`, read with `resload_LoadFile`, written with
+  `resload_SaveFile` and deleted with `resload_DeleteFile`; there are no
+  drive searches or disk prompts.
