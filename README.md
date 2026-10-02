@@ -12,6 +12,8 @@ For floppy (A500) and as a WHDLoad install for hard disk.
 This is version 2. Version 1.x, an editor for the terrain of the original
 levels, is a separate line; see [Version 1.x](#version-1x).
 
+**Video Demo:** [Amiga Lemmings In-Game Level Editor (YouTube)](https://youtu.be/5SugA1FBKnA)
+
 ![The title screen with CUSTOM selected, on an A500](docs/images/Lemmings_level_editor_menu_v2.jpg)
 
 ![The editor in object mode, with the status block below the skill panel, on an A500](docs/images/Lemmings_level_editor_v2.jpg)
