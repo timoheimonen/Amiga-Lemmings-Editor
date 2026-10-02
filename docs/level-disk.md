@@ -99,8 +99,15 @@ write fails, the level is saved but the index is stale; `savedisk.py
 rebuild-index` rebuilds it from a scan of every slot. Damaged slots block the
 rebuild and are never discarded silently.
 
-Deletion (`savedisk.py delete`) zeroes the whole slot and updates the index
-in the same order.
+Deletion (`Del` in the game's list, or `savedisk.py delete`) zeroes the whole
+slot and updates the index in the same order. The game deletes a level only
+while its slot still holds what the list showed when it asked (the CRC-32 of
+the whole 2816-byte slot) and the index still lists it, and only when the
+slot's track reads, since the whole track is written back. A slot that is
+already all zero is not written again; only its index entry is cleared. If
+the index write fails after the data track, the slot is empty but the index
+still lists it: the list shows it as a damaged level, and deleting it again
+or `savedisk.py rebuild-index` completes the deletion.
 
 ## Name and music
 
@@ -120,6 +127,15 @@ names longer than 107 characters are left out, and files that are not
 exactly one valid level are listed as damaged. A new level is saved as the
 first free `LevelNNN.lvl`, a name neither listed nor found as a file; when
 `Level001.lvl` to `Level999.lvl` are all taken, nothing is written.
+
+A level deleted in the list is deleted with `resload_DeleteFile`; the file
+must be gone afterwards, otherwise the list says that it could not be
+deleted (WHDLoad returns success without deleting on a read-only file
+system, or with `SavePath` for a file outside the save path). With WHDLoad's
+write cache (without `NOWRITECACHE`) the file stays on the hard disk until
+WHDLoad quits, and WHDLoad's directory listing still contains it until then;
+the editor remembers the names it deleted in the session (up to 32) and
+leaves them out of the list while the file cannot be found.
 
 ## Levels for two players
 

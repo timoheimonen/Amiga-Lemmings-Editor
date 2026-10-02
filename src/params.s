@@ -1,4 +1,4 @@
-; Lemmings In-Game Level Editor V2.1.1
+; Lemmings In-Game Level Editor V2.2
 ; Copyright (c) 2026 Timo Heimonen <timo.heimonen@proton.me>
 ; Licensed under the MIT License. See the LICENSE file for details.
 ;
@@ -533,7 +533,7 @@ status_texts:
         rts
 
 status_footer:
-        dc.b 5,50,'Editor V2.1.1 by Timo Heimonen',0,$ff
+        dc.b 5,50,'Editor V2.2 by Timo Heimonen',0,$ff
 status_modes:
         dc.w status_terrain-status_modes,status_steel-status_modes
         dc.w status_objects-status_modes,status_none-status_modes

@@ -46,11 +46,12 @@ up arrow and click 1 Player: the list shows the custom levels, the `.lvl` files
 in the `Levels` directory, sorted by file name. A `.lvl` file is a level in
 the Amiga game's own 2048-byte format; files that are not exactly one valid
 level are listed as damaged. A click or Return plays the selected level, E
-edits it; the right mouse button or Esc returns to the title screen. 2 Player
-lists the levels that are valid for two players and plays them in the game's
-two-player mode, one level per match (reading every file when the list
-opens). New Level in CUSTOM starts a new level in one of the five graphics
-styles, for one or for two players.
+edits it, and Del deletes its file after asking (only Return confirms; a
+deleted level cannot be brought back); the right mouse button or Esc returns
+to the title screen. 2 Player lists the levels that are valid for two players
+and plays them in the game's two-player mode, one level per match (reading
+every file when the list opens). New Level in CUSTOM starts a new level in
+one of the five graphics styles, for one or for two players.
 
 The editor opens at the start of the level. E test plays the level from its
 start and returns to the editor; T, O and P switch between the terrain, steel
@@ -87,6 +88,11 @@ disabled:
 
 `WRITEDELAY` is in 1/50 s; WHDLoad waits that long after every write so the
 file system can finish.
+
+Deleting a level (Del in the list) follows the same tool types: with
+`NOWRITECACHE` the file is deleted from the hard disk at once, after the same
+wait; without it the list no longer shows the file, but WHDLoad deletes it
+from the hard disk only when it quits.
 
 If a write fails (for example a full or write-protected volume), WHDLoad ends
 the game with an error requester.

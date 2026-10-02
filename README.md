@@ -2,7 +2,7 @@
 
 A patch that adds custom levels to Amiga Lemmings (1991): an in-game level
 editor that runs natively on the Amiga, inside the original game and its
-engine. No PC tools are needed to make a level.
+engine. No External tools are needed to make a level.
 
 On the title screen, CUSTOM follows FUN, TRICKY, TAXING and MAYHEM, with a
 list of your own levels, for one or two players, and New Level to create
@@ -68,7 +68,8 @@ python3 patch.py "Disk 1.adf" "Disk 2.adf" --whdload out/Lemmings
 Writes a WHDLoad install (slave, disk images, Workbench icon and the
 directory `Levels`) for Kickstart 2.0 or later. Custom levels are `.lvl`
 files in `Levels`; no level disk is needed. Started from its icon, WHDLoad
-writes a saved level to the hard disk at once. See
+writes a saved level to the hard disk, and deletes a deleted one, at once.
+See
 [whdload/README.md](whdload/README.md).
 
 ## Custom levels
@@ -78,8 +79,10 @@ its up arrow. In CUSTOM:
 
 - **1 Player** opens the list of custom levels, ten per page, with their
   titles. A click or Return plays the selected level, `E` opens it in the
-  editor; the cursor keys select and turn pages; the right button or Esc
-  returns to the title screen. A played level returns to the list.
+  editor, and `Del` deletes it after asking (only Return confirms; a deleted
+  level cannot be brought back); the cursor keys select and turn pages; the
+  right button or Esc returns to the title screen. A played level returns to
+  the list.
 - **2 Player** lists the levels made for two players and plays them in the
   game's own two-player mode (two mice, split screen): one level per match,
   then the winner and back to the list.
@@ -207,8 +210,9 @@ icon (`whdload/build.py`), and embeds everything in the generated section of
   parameters and set the game up again from the level record after every
   change. `src/undo.s` keeps the undo history and rebuilds the terrain under a
   removed piece; `src/delete.s` deletes whole pieces.
-- `src/level_save.s` checks and saves the level, `src/menu.s` is the menu
-  for the title, disk prompts and messages, and `src/disk_io.s` and
+- `src/level_save.s` checks and saves the level, `src/level_delete.s`
+  deletes a level from the list, `src/menu.s` is the menu for the title, disk
+  prompts and messages, and `src/disk_io.s` and
   `src/disk_codec.s` read and write the level disk directly through the disk
   hardware (MFM tracks, verified writes).
 - `patch.py` adds the bootstrap and three jump hooks to the program file and

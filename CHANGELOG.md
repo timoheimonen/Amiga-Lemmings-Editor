@@ -1,5 +1,24 @@
 # Changelog
 
+## V2.2
+
+- Deleting custom levels: `Del` in the 1 Player list asks before deleting
+  the selected level, naming it by its number and title; only Return
+  deletes, Esc or the right button keeps it. The list stays at its place.
+  The list's help line reads `Click plays, E edits, Del deletes`.
+- Floppy: the level's slot on the level disk is cleared, the data track
+  before the index, both read back and verified. Nothing is written when the
+  disk holds another level in that place (another level disk was inserted),
+  when it is write-protected or when the track does not read. Damaged levels
+  can be deleted too. After an interrupted deletion the list shows the slot
+  as damaged; deleting it again or `savedisk.py rebuild-index` completes it.
+  The other levels keep their numbers, and the next new level takes the
+  lowest free slot.
+- WHDLoad: the level's `.lvl` file is deleted. With the icon's
+  `NOWRITECACHE` it leaves the hard disk at once (the display is blanked for
+  about three seconds); without it, when WHDLoad quits, and until then the
+  list no longer shows it.
+
 ## V2.1.1
 
 - Saving no longer writes over a level of another level disk: when the level

@@ -1,4 +1,4 @@
-; Lemmings In-Game Level Editor V2.1.1
+; Lemmings In-Game Level Editor V2.2
 ; Copyright (c) 2026 Timo Heimonen <timo.heimonen@proton.me>
 ; Licensed under the MIT License. See the LICENSE file for details.
 ;
@@ -22,3 +22,4 @@ resload_GetFileSize     equ $24
 resload_DiskLoad        equ $28
 resload_SaveFileOffset  equ $38
 resload_LoadFileOffset  equ $4c
+resload_DeleteFile      equ $58

@@ -1,4 +1,4 @@
-; Lemmings In-Game Level Editor V2.1.1
+; Lemmings In-Game Level Editor V2.2
 ; Copyright (c) 2026 Timo Heimonen <timo.heimonen@proton.me>
 ; Licensed under the MIT License. See the LICENSE file for details.
 ;
@@ -401,39 +401,15 @@ disk_store_level:
         move.w #(LEVEL_SLOT_SIZE-LEVEL_SIZE)/4-1,d0
 .pad:   clr.l (a2)+
         dbra d0,.pad
-        movea.l a1,a0
-        bsr disk_write_decoded
-        tst.l d0
-        bne .release
-        ; The data track is durable before the index is changed. Re-read
-        ; track zero and refuse any changed snapshot before updating it.
-        lea install(pc),a1
-        adda.l #DISK_VERIFY,a1
-        moveq #0,d0
-        bsr disk_read_decoded
-        tst.l d0
-        bne.s .index_failed
-        lea install(pc),a0
-        adda.l #DISK_HEADER,a0
-        bsr disk_compare
-        bne.s .index_failed
-        movea.l a0,a2
         lea save_record(pc),a0          ; state 2: valid for two players
-        moveq #1,d1
+        moveq #1,d3
         bsr two_player_level
         bne.s .state
-        moveq #2,d1
-.state: move.w d7,d0
-        add.w d0,d0
-        move.b d1,64(a2,d0.w)
-        move.b save_record+$1b(pc),65(a2,d0.w)
-        movea.l a2,a0
-        bsr seal_level_index
-        bsr disk_write_decoded
-        tst.l d0
-        beq.s .release
-.index_failed:
-        moveq #DISK_INDEX_WRITE,d0
+        moveq #2,d3
+.state: lsl.w #8,d3
+        move.b save_record+$1b(pc),d3   ; and the style
+        moveq #1,d2
+        bsr.s disk_commit_slot
         bra.s .release
 .changed:
         tst.l d6
@@ -449,6 +425,53 @@ disk_store_level:
 .done:  move.l d7,d1
         movem.l (sp)+,d2-d7/a0-a6
         rts
+
+; The second half of a slot transaction, after the caller's checks. D7:
+; slot, A1: DISK_TRACK, read afresh, with the slot's new contents in place,
+; D3: the slot's new index entry (state in the high byte, style in the low
+; byte), D2: zero when the slot is unchanged and its track need not be
+; written. The data track is written and verified first; then track 0 is
+; read again and must equal its snapshot in DISK_HEADER before the entry and
+; both checksums are written and verified. Return D0: after the data track
+; was written, any failure is DISK_INDEX_WRITE; without it, the error itself
+; unless track 0 was written but not verified.
+disk_commit_slot:
+        movem.l d2-d3,-(sp)
+        tst.b d2
+        beq.s .index
+        movea.l a1,a0
+        bsr disk_write_decoded
+        tst.l d0
+        bne.s .done
+.index: lea install(pc),a1
+        adda.l #DISK_VERIFY,a1
+        moveq #0,d0
+        bsr disk_read_decoded
+        tst.l d0
+        bne.s .failed
+        lea install(pc),a0
+        adda.l #DISK_HEADER,a0
+        bsr disk_compare
+        bne.s .changed
+        move.w d7,d0
+        add.w d0,d0
+        move.w 6(sp),64(a0,d0.w)        ; D3's low word
+        bsr.s seal_level_index
+        bsr disk_write_decoded
+        tst.l d0
+        beq.s .done
+.failed:
+        tst.b 3(sp)                     ; D2: the data track was written
+        bne.s .index_write
+        cmp.l #DISK_DAMAGED,d0
+        bne.s .done
+.index_write:
+        moveq #DISK_INDEX_WRITE,d0
+.done:  movem.l (sp)+,d2-d3
+        rts
+.changed:
+        moveq #DISK_CHANGED,d0
+        bra.s .failed
 
 ; A0: complete level disk track 0. Seal a changed index and its header.
 seal_level_index:
@@ -496,16 +519,8 @@ level_store_file:
 
 ; Put Levels/ and custom_file into list_path. Return A0 = list_path.
 level_file_path:
-        lea list_path(pc),a1
-        lea levels_dir(pc),a0
-.dir:   move.b (a0)+,(a1)+
-        bne.s .dir
-        move.b #'/',-1(a1)
         lea custom_file(pc),a0
-.name:  move.b (a0)+,(a1)+
-        bne.s .name
-        lea list_path(pc),a0
-        rts
+        bra list_name_path
 
 ; A2: resload base. Put the first name LevelNNN.lvl that is not in Levels
 ; into custom_file: not in the listing, and checked once more by its size,
