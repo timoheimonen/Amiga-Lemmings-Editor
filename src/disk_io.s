@@ -1,4 +1,4 @@
-; Lemmings In-Game Level Editor V2.2
+; Lemmings In-Game Level Editor V2.3
 ; Copyright (c) 2026 Timo Heimonen <timo.heimonen@proton.me>
 ; Licensed under the MIT License. See the LICENSE file for details.
 ;
@@ -7,7 +7,8 @@
 ; Interrupts remain enabled. In a level the non-displayed viewport is borrowed
 ; until the call returns; no drawing or buffer swap may run inside a transport
 ; call. All public calls preserve every register except D0/CCR. A5 is game
-; globals. The WHDLoad version has no disks; it uses disk_file.s instead.
+; globals. The versions with level files (FILES) have no level disk; they
+; include disk_file.s (WHDLoad) or dos_file.s instead.
 DISK_REFUSED    equ -1
 DISK_CANCELLED  equ -2
 DISK_NO_MEDIA   equ -3
@@ -20,8 +21,12 @@ DISK_INDEX      equ -9
 DISK_INDEX_WRITE equ -10
 RAW_TITLE       equ $58800            ; the game's raw track buffer, idle on the title screen
 
+        ifd FILES
         ifd WHDLOAD
         include "disk_file.s"
+        else
+        include "dos_file.s"
+        endif
         else
 
 ; D0: drive 0..3, D1: track 0..159. Output: DISK_TRACK, cleared on failure.
@@ -133,18 +138,18 @@ disk_acquire:
         bne.s .idle
         tst.b active(a4)
         beq .bad
-        tst.b $39(a5)
+        tst.b G_PAUSE(a5)
         beq .bad
-        tst.b $30(a5)
+        tst.b G_TWO_PLAYERS(a5)
         bne .bad
-        move.l $cc(a5),d1
+        move.l G_VIEW_BACK(a5),d1
         move.l #$2bd42,d2
         cmp.l #$23940,d1
         beq.s .front
         move.l #$23942,d2
         cmp.l #$2bd40,d1
         bne .bad
-.front: cmp.l $d0(a5),d2
+.front: cmp.l G_VIEW_FRONT(a5),d2
         bne .bad
 .idle:  move.b $bfd100,d2
         and.b #$78,d2

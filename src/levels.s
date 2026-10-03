@@ -1,38 +1,40 @@
-; Lemmings In-Game Level Editor V2.2
+; Lemmings In-Game Level Editor V2.3
 ; Copyright (c) 2026 Timo Heimonen <timo.heimonen@proton.me>
 ; Licensed under the MIT License. See the LICENSE file for details.
 ;
-; Custom level list. "1 Player" in the CUSTOM rating opens it in place of the
-; title screen, on the game's own text screen (the one of the level briefing):
-; 13 rows of 40 characters in the game's font, each row with its own palette.
-; It lists the custom levels ten per page and returns to the title screen with
-; the right mouse button or Esc. A click or Return plays the selected level
-; through the game's own level start and briefing; when it ends, the game
-; returns to the list. "2 Player" opens the same list with only the levels
-; that are valid for two players (two_player_level), played in the game's
-; two-player mode as a match of one level.
+; Custom level list. The title screen's play button in the CUSTOM rating
+; ("1 Player" in Lemmings, PLAY in Holiday Lemmings 1994) opens it in place of
+; the title screen, on the game's own text screen (the one of the level
+; briefing): 13 rows of 40 characters in the game's font, each row with its
+; own palette. It lists the custom levels ten per page and returns to the
+; title screen with the right mouse button or Esc. A click or Return plays the
+; selected level through the game's own level start and briefing; when it
+; ends, the game returns to the list. In Lemmings "2 Player" opens the same
+; list with only the levels that are valid for two players
+; (two_player_level), played in the game's two-player mode as a match of one
+; level.
 ;
 ; The list runs at the top level of the game's main flow: entered from the
 ; title screen it drops the title routine's return address, and it leaves
-; through the game's own way back to the title screen ($554) or into a level
-; ($56A), as the game does after its result screens. The game keeps A4 at its
-; row offset table ($A3C0) everywhere; the list sets it back before leaving.
+; through the game's own way back to the title screen (TITLE_LOOP) or into a
+; level (ENTER_LEVEL), as the game does after its result screens. The game
+; keeps A4 at its row offset table (GAME_ROWS) everywhere; the list sets it
+; back before leaving.
 ;
-; A custom level is the Amiga game's bare 2048-byte level record. On floppy
-; the levels come from a level disk, read with the editor's track transport;
-; on the title screen the transport borrows the game's raw track buffer, which
-; is idle there. Under WHDLoad they are the .lvl files in the directory Levels
-; of the data directory, sorted by name.
+; A custom level is the Amiga game's bare 2048-byte level record. The floppy
+; version of Lemmings keeps the levels on a level disk, read with the editor's
+; track transport; on the title screen the transport borrows the game's raw
+; track buffer, which is idle there. The other versions (FILES) keep them as
+; .lvl files in a directory Levels, listed sorted by name: the WHDLoad
+; versions in the install's directory (disk_file.s), the floppy version of
+; Holiday Lemmings 1994 in the current directory (dos_file.s).
 ;
 ; A4 is the editor state, A5 the game globals and A6 the custom chip base.
 
 LIST_ROWS       equ 10                  ; levels per page
 LIST_FIRST      equ 2                   ; text row of the first level
 TEXT_ROWS       equ 13
-COPPER_ROWS     equ $8754               ; 13 groups of 16 colour moves and a wait
 COPPER_GROUP    equ 68
-PALETTES        equ $8dd0               ; the game's text palettes, 32 bytes each
-FADE_BLACK      equ $8cd6               ; palette numbers: every row black
 PAL_HEAD        equ 1                   ; red
 PAL_PAGE        equ 6                   ; cyan
 PAL_LEVEL       equ 4                   ; blue
@@ -41,8 +43,7 @@ PAL_HELP        equ 5                   ; green
 LEVEL_SLOTS     equ 318
 LEVEL_SLOT_SIZE equ 2816
 LEVEL_SIZE      equ 2048
-LEVELDATA       equ $1f7a2              ; leveldata: $590 bytes per style
-        ifd WHDLOAD
+        ifd FILES
 LIST_NAMES      equ $1a100              ; free part of the editor block
 LIST_NAMES_SIZE equ $5e00
 NAME_MAX        equ 107                 ; the longest AmigaDOS file name
@@ -52,26 +53,32 @@ LS_UNKNOWN      equ 0                   ; level_status values
 LS_OK           equ 1
 LS_DAMAGED      equ 2
 
-; Entered with a jump from the title screen ($33C0 hook, inside the title
-; routine called from $566): 1 Player lists every custom level, 2 Player the
-; ones valid for two players (two_player_level).
+; Entered with a jump from the title screen (title.s, holiday94.s; inside the
+; title routine called from the game's main flow): the play button lists every
+; custom level, Lemmings' 2 Player the ones valid for two players
+; (two_player_level).
 level_list:
         addq.l #4,sp                    ; the title routine does not return
         lea state(pc),a4
         clr.b list_players(a4)
+        ifd TWO_PLAYER
         bra.s list_enter
 level_list_two:
         addq.l #4,sp
         lea state(pc),a4
         st list_players(a4)
+        endif
 list_enter:
         clr.b list_mode(a4)
         clr.w list_page(a4)
         clr.w list_sel(a4)
-        move.b $32(a5),list_old32(a4)
-        move.w $42(a5),list_old42(a4)
+        move.b G_TEXT_MODE(a5),list_old32(a4)
+        move.w G_LEVEL(a5),list_old42(a4)
+        ifd G_TRIES
+        move.b G_TRIES(a5),list_old_tries(a4)
+        endif
         lea (FADE_BLACK).l,a0
-        jsr $19e4
+        jsr FADE
 
 ; Entered with a jump after a custom level, at the top level; the screen is
 ; black. The page and selection stay.
@@ -93,7 +100,7 @@ level_list_return:
 ; level. D0 from the key and mouse handlers: -1 leave, 1 play, 2 edit,
 ; 3 delete.
 list_loop:
-.loop:  jsr $196a
+.loop:  jsr WAIT_FRAME
         bsr menu_next_key
         tst.w d0
         bmi.s .mouse
@@ -127,7 +134,7 @@ list_loop:
         bne.s .loop
         bra list_delete
 .leave:
-        ifnd WHDLOAD
+        ifnd FILES
         ; The title screen and the game's own levels load files by the
         ; directory of disk 2 too: disk 2 must be back in the game's drive.
         bsr list_disk2
@@ -143,18 +150,21 @@ list_loop:
 .fade:
         endif
         lea (FADE_BLACK).l,a0
-        jsr $19e4
+        jsr FADE
         bsr list_close
         clr.b custom_play(a4)
         clr.b custom_edit(a4)
-        move.w #3,$aa(a5)               ; the title screen's CUSTOM follows MAYHEM
-        move.w list_old42(a4),$42(a5)   ; and its level, which the tunes changed
+        move.w #RATINGS-1,G_RATING(a5)       ; the title screen's CUSTOM follows the last rating
+        move.w list_old42(a4),G_LEVEL(a5)   ; and its level, which the tunes changed
+        ifd G_TRIES
+        move.b list_old_tries(a4),G_TRIES(a5) ; and the tries of its access code
+        endif
         tst.b list_played(a4)
         beq.s .title
         clr.b list_played(a4)
-        jsr $2c7e                       ; reload Icons, as the game does after a level
+        jsr LOAD_ICONS                       ; reload Icons, as the game does after a level
 .title: lea (GAME_ROWS).l,a4             ; the game's A4 throughout
-        jmp $554
+        jmp TITLE_LOOP
 
 ; A0: message. Show it with the hint that a click looks for the levels
 ; again, and continue in the list's input loop.
@@ -170,17 +180,17 @@ list_failed:
 list_close:
         clr.b list_open(a4)
         clr.b title_disk(a4)
-        move.b list_old32(a4),$32(a5)
+        move.b list_old32(a4),G_TEXT_MODE(a5)
         rts
 
 ; Edit the level in custom_record: play it with the editor open from the
 ; first frame (load_reopen). custom_slot remembers where it came from: the
-; level disk slot, or under WHDLoad the list entry.
+; level disk slot, or with level files (FILES) the list entry.
 list_edit:
         bsr list_entry
         lea level_slots(pc),a0
         add.w d0,d0
-        ifd WHDLOAD
+        ifd FILES
         move.w 0(a0,d0.w),d0            ; the file name, kept for saving
         lea install(pc),a0
         adda.l #LIST_NAMES,a0
@@ -200,16 +210,16 @@ list_edit:
         bsr list_entry
         bra.s list_start
 
-; Play the level in custom_record: start it as "1 Player" does ($3460..$3488)
+; Play the level in custom_record: start it as the title screen's play button does
 ; with the level number chosen for its tune, then continue in the game's main
-; flow at $56A (level set-up, briefing, play).
+; flow at ENTER_LEVEL (level set-up, briefing, play).
 list_play:
         clr.b custom_edit(a4)
         bsr list_entry
 
 ; D0: list entry (0-based), or -1 for a new level.
 list_start:
-        ifnd WHDLOAD
+        ifnd FILES
         bsr list_disk2
         beq.s .disk2
         clr.b custom_edit(a4)           ; cancelled: back to the list
@@ -229,7 +239,7 @@ list_start:
         clr.b custom_test(a4)
         clr.b leaving(a4)
         bsr level_remember
-        ifnd WHDLOAD
+        ifnd FILES
         tst.w d0
         bmi.s .number
         lea level_slots(pc),a0          ; the slot, whose number the list shows
@@ -245,32 +255,36 @@ list_start:
 .tune:  ext.l d0
         divu #17,d0
         swap d0                         ; the tune rotation of 17 by its number
-        move.w d0,$42(a5)
-        clr.w $aa(a5)
+        move.w d0,G_LEVEL(a5)
+        clr.w G_RATING(a5)
         lea (FADE_BLACK).l,a0
-        jsr $19e4
+        jsr FADE
         bsr list_close
+        ifd TWO_PLAYER
         tst.b list_players(a4)
         bne.s .two
-        clr.b $30(a5)
-        tst.b $3c(a5)
+        endif
+        clr.b G_TWO_PLAYERS(a5)
+        tst.b G_PANEL(a5)
         beq.s .panel
-        jsr $3510                       ; the one-player panel
+        jsr PANEL_ONE                       ; the one-player panel
+        ifd TWO_PLAYER
         bra.s .panel
-.two:   st $30(a5)                      ; as 2 Player does ($342C..$3450)
-        clr.w $104(a5)                  ; no lemmings carried over, no wins
-        clr.w $106(a5)
-        clr.w $110(a5)
-        clr.w $112(a5)
-        tst.b $3c(a5)
+.two:   st G_TWO_PLAYERS(a5)                      ; as 2 Player does ($342C..$3450)
+        clr.w G_WINS_BLUE(a5)                  ; no lemmings carried over, no wins
+        clr.w G_WINS_GREEN(a5)
+        clr.w G_SAVED_BLUE(a5)
+        clr.w G_SAVED_GREEN(a5)
+        tst.b G_PANEL(a5)
         bmi.s .panel
-        jsr $3522                       ; the two-player panel
+        jsr PANEL_TWO                       ; the two-player panel
+        endif
 .panel: lea (GAME_ROWS).l,a4             ; the game's A4 throughout
-        jsr $2632
-        jsr $1b10
-        jmp $56a
+        jsr LOAD_LEVEL
+        jsr TITLE_PREPARE
+        jmp ENTER_LEVEL
 
-        ifnd WHDLOAD
+        ifnd FILES
 ; Before a level starts, and before the list returns to the title screen.
 ; The game loads its files through the directory of
 ; disk 2 it read at start-up, from the drive it found disk 2 in ($2(A5)),
@@ -303,7 +317,7 @@ list_disk2:
         lea txt_list_disk2(pc),a0
         bsr list_message
         bsr list_buttons
-.wait:  jsr $196a
+.wait:  jsr WAIT_FRAME
         bsr menu_next_key
         cmp.w #KEY_ESC,d0
         beq.s .cancel
@@ -335,10 +349,12 @@ list_disk2:
 ; result screens. Each one does exactly the game's work unless custom_play is
 ; set.
 
-; Replaces $26E6..$26EF in the level loader ($2632), after the level record
-; has been copied to $C5A6 and before the loader reads its graphics style and
+; Replaces two instructions at HOOK_INJECT in the level loader (LOAD_LEVEL),
+; after the level record has been copied to LEVEL_RECORD and before the loader
+; reads its graphics style and
 ; special background: put the custom record there. The level bank cache
-; ($76(A5)) no longer matches $C5A6, so the next original level reloads it.
+; (G_BANK) no longer matches LEVEL_RECORD, so the next original level
+; reloads it.
 custom_inject:
         move.l a4,-(sp)
         lea state(pc),a4
@@ -346,29 +362,29 @@ custom_inject:
         beq.s .game
         movem.l d0/a0-a1,-(sp)
         lea custom_record(pc),a0
-        lea ($c5a6).l,a1
+        lea (LEVEL_RECORD).l,a1
         move.w #LEVEL_SIZE/4-1,d0
 .copy:  move.l (a0)+,(a1)+
         dbra d0,.copy
-        move.w #-1,$76(a5)
+        move.w #-1,G_BANK(a5)
         movem.l (sp)+,d0/a0-a1
 .game:  movea.l (sp)+,a4
-        lea ($c5a6).l,a0
+        lea (LEVEL_RECORD).l,a0
         move.w $1a(a0),d0
-        jmp $26f0
+        jmp INJECT_DONE
 
-; Replaces the briefing's two calls at $34AA..$34B1: the texts ($2BA2) and
-; the level preview ($4B58). For a custom level the briefing shows its list
+; Replaces the briefing's two calls at HOOK_BRIEFING: the texts (BRIEF_TEXTS)
+; and the level preview (BRIEF_PREVIEW). For a custom level the briefing shows its list
 ; number, the rating Custom, and ';' for any ':' in the title (the game's
 ; text routine takes ':' as a control character).
 custom_brief:
-        jsr $2ba2
+        jsr BRIEF_TEXTS
         move.l a4,-(sp)
         lea state(pc),a4
         tst.b custom_play(a4)
         beq .done
         movem.l d0-d3/a0-a1,-(sp)
-        lea ($917c).l,a1                ; "Level 00", 8 characters
+        lea (BRIEF_LEVEL).l,a1                ; "Level 00", 8 characters
         lea txt_brief_level(pc),a0
         move.w custom_number(a4),d0
         bne.s .number
@@ -382,7 +398,7 @@ custom_brief:
         bne.s .name
         subq.l #1,a1
         and.l #$ffff,d0
-        jsr $1862                       ; four ASCII digits in D0
+        jsr NUMBER_DIGITS                       ; four ASCII digits in D0
         moveq #3,d2                     ; digits after the current one
 .lead:  rol.l #8,d0                     ; skip leading zeros, keep the last digit
         tst.w d2
@@ -400,17 +416,17 @@ custom_brief:
         move.b (a0)+,(a1)+
         bne.s .copy_new
         subq.l #1,a1
-.pad:   cmpa.l #$9184,a1
+.pad:   cmpa.l #BRIEF_LEVEL+8,a1
         bhs.s .rating
         move.b #' ',(a1)+
         bra.s .pad
 .rating:
-        lea ($9204).l,a1                ; the rating name, 8 characters
+        lea (BRIEF_RATING).l,a1                ; the rating name, 8 characters
         lea txt_brief_rating(pc),a0
         moveq #7,d0
 .copy:  move.b (a0)+,(a1)+
         dbra d0,.copy
-        lea ($9187).l,a1                ; the title, 32 characters
+        lea (BRIEF_TITLE).l,a1                ; the title, 32 characters
         moveq #31,d0
 .title: cmpi.b #':',(a1)+
         bne.s .next
@@ -418,43 +434,43 @@ custom_brief:
 .next:  dbra d0,.title
         movem.l (sp)+,d0-d3/a0-a1
 .done:  movea.l (sp)+,a4
-        jmp $4b58
+        jmp BRIEF_PREVIEW
 
-; Replaces $760..$767 on the result screen when enough lemmings were saved.
+; Replaces HOOK_WON on the result screen when enough lemmings were saved.
 ; The game would continue with the next level; a custom level shows the
 ; result and returns to the list, or after a test play to the editor.
 custom_won:
-        clr.b $33(a5)
+        clr.b G_RESULT_SHOWN(a5)
         move.l a4,-(sp)
         lea state(pc),a4
         tst.b custom_play(a4)
         movea.l (sp)+,a4
         bne.s .custom
-        move.w $42(a5),d0
-        jmp $768
+        move.w G_LEVEL(a5),d0
+        jmp WON_DONE
 .custom:
-        jsr $82a                        ; the comment on the result
-        jsr $36e4                       ; "Press mouse button to continue"
-        lea ($8c54).l,a0
-        jsr $19e4
-        jsr $18de
+        jsr RESULT_COMMENT                        ; the comment on the result
+        jsr PRESS_BUTTON                       ; "Press mouse button to continue"
+        lea (FADE_RESULT).l,a0
+        jsr FADE
+        jsr WAIT_CLICK
         lea (FADE_BLACK).l,a0
-        jsr $19e4
+        jsr FADE
         move.l a4,-(sp)
         lea state(pc),a4
         tst.b custom_edit(a4)
         movea.l (sp)+,a4
         beq level_list_return
-        jsr $2632                       ; the level again, in the editor
-        jmp $56a
+        jsr LOAD_LEVEL                       ; the level again, in the editor
+        jmp ENTER_LEVEL
 
-; Replaces $818..$821, the right mouse button on the result screen after a
+; Replaces HOOK_QUIT, the right mouse button on the result screen after a
 ; failed level: back to the list instead of the title screen for a custom
 ; level, and back to the editor after a test play (the left button retries it
 ; through the level loader, as the game does).
 custom_quit:
         lea (FADE_BLACK).l,a0
-        jsr $19e4
+        jsr FADE
         move.l a4,-(sp)
         lea state(pc),a4
         tst.b custom_edit(a4)
@@ -462,14 +478,14 @@ custom_quit:
         tst.b custom_play(a4)
         movea.l (sp)+,a4
         bne level_list_return
-        jmp $822
+        jmp QUIT_DONE
 .editor:
         movea.l (sp)+,a4
-        jsr $2632                       ; the level again, in the editor
-        jmp $56a
+        jsr LOAD_LEVEL                       ; the level again, in the editor
+        jmp ENTER_LEVEL
 
-; Replaces $706..$70D after the level has ended and faded out, before the
-; result screen: tst.b $30(A5) / bne $89E (two players). When the editor was
+; Replaces HOOK_ENDED after the level has ended and faded out, before the
+; result screen (RESUME_ENDED). When the editor was
 ; left with Esc, go to the list without a result screen.
 custom_ended:
         move.l a4,-(sp)
@@ -479,15 +495,16 @@ custom_ended:
         clr.b leaving(a4)
         clr.b custom_edit(a4)
         movea.l (sp)+,a4
+        ifd G_MUSIC
+        clr.b G_MUSIC(a5)               ; as the replaced instructions do
+        endif
         lea (FADE_BLACK).l,a0
-        jsr $19e4
+        jsr FADE
         bra level_list_return
 .game:  movea.l (sp)+,a4
-        tst.b $30(a5)
-        bne.s .two
-        jmp $70e
-.two:   jmp $89e
+        RESUME_ENDED
 
+        ifd TWO_PLAYER
 ; Replaces $918..$91F in the two-player result, after the level's win has
 ; been counted: BSR $9CA (the wins) / ADDQ.W #1,$42(A5) (the next level). A
 ; custom level is a match of one level: show the winner as at the end of the
@@ -499,11 +516,11 @@ custom_match:
         tst.b custom_play(a4)
         movea.l (sp)+,a4
         bne.s .custom
-        jsr $9ca
-        addq.w #1,$42(a5)
-        jmp $920
+        jsr MATCH_WINS
+        addq.w #1,G_LEVEL(a5)
+        jmp MATCH_NEXT
 .custom:
-        jmp $96a
+        jmp MATCH_WINNER
 
 ; Replaces $9BE..$9C5 at the end of the two-player match, after the fade to
 ; black: CLR.B $38(A5) / CLR.W $42(A5), then back to the title screen. A
@@ -514,11 +531,12 @@ custom_match_end:
         tst.b custom_play(a4)
         movea.l (sp)+,a4
         bne level_list_return
-        clr.b $38(a5)
-        clr.w $42(a5)
-        jmp $9c6
+        clr.b G_TITLE_FLAG(a5)
+        clr.w G_LEVEL(a5)
+        jmp MATCH_END_DONE
+        endif
 
-; Replaces $3502..$3509 at the end of the briefing: the click wait ($18DE)
+; Replaces HOOK_BRIEF_WAIT at the end of the briefing: the click wait (WAIT_CLICK)
 ; and the following LEA. An edited custom level (in the editor or a test
 ; play) starts at once.
 briefing_wait:
@@ -527,9 +545,9 @@ briefing_wait:
         tst.b custom_edit(a0)
         movea.l (sp)+,a0
         bne.s .done
-        jsr $18de
-.done:  lea ($8cd6).l,a0
-        jmp $350a
+        jsr WAIT_CLICK
+.done:  lea (FADE_BLACK).l,a0
+        jmp BRIEF_WAIT_DONE
 
 txt_brief_level:        dc.b 'Level ',0
 txt_brief_lvl:          dc.b 'Lvl ',0
@@ -538,21 +556,24 @@ txt_brief_rating:       dc.b 'Custom  '
         even
 
 ; ---------------------------------------------------------------------------
-; A new level. New Level in CUSTOM (title.s) jumps here from inside the title
-; routine, like 1 Player. The list shows the five graphics styles, then the
-; same for two players; the chosen one starts an empty level in the editor,
-; with an entrance and an exit, or for two players with an entrance, an exit
-; for each player and the marker.
+; A new level. New Level in CUSTOM (title.s, holiday94.s) jumps here from
+; inside the title routine, like the play button. The list shows the game's
+; graphics styles, in Lemmings then the same for two players; the chosen one
+; starts an empty level in the editor, with an entrance and an exit, or for
+; two players with an entrance, an exit for each player and the marker.
 
 level_new:
         addq.l #4,sp                    ; the title routine does not return
         lea state(pc),a4
         lea $dff000,a6
         clr.b list_players(a4)
-        move.b $32(a5),list_old32(a4)
-        move.w $42(a5),list_old42(a4)
+        move.b G_TEXT_MODE(a5),list_old32(a4)
+        move.w G_LEVEL(a5),list_old42(a4)
+        ifd G_TRIES
+        move.b G_TRIES(a5),list_old_tries(a4)
+        endif
         lea (FADE_BLACK).l,a0
-        jsr $19e4
+        jsr FADE
         st list_mode(a4)
         clr.w list_page(a4)
         clr.w list_sel(a4)
@@ -566,6 +587,7 @@ level_new:
         lea level_slots(pc),a0
         lea level_status(pc),a1
         lea level_titles(pc),a2
+        ifd TWO_PLAYER
         ; The five styles for one player, then for two players.
         moveq #0,d0
 .style: move.w d0,(a0)+
@@ -603,6 +625,34 @@ level_new:
         cmp.w #10,d0
         blo.s .style
         move.w #10,list_count(a4)
+        else
+        ; The game's styles (STYLE_MASK); level_slots holds their numbers.
+        moveq #0,d0                     ; list entry
+        moveq #0,d3                     ; style
+        lea txt_styles(pc),a3
+.style: moveq #STYLE_MASK,d2
+        btst d3,d2
+        beq.s .next
+        move.w d3,(a0)+
+        move.b #LS_OK,(a1)+
+        moveq #31,d2
+.pad:   move.b #' ',(a2)+
+        dbra d2,.pad
+        lea -32(a2),a2
+.name:  move.b (a3)+,d2
+        beq.s .named
+        move.b d2,(a2)+
+        bra.s .name
+.named: addq.w #1,d0
+        lea level_titles(pc),a2
+        move.w d0,d2
+        lsl.w #5,d2
+        adda.w d2,a2
+.next:  addq.w #1,d3
+        cmp.w #STYLES,d3
+        blo.s .style
+        move.w d0,list_count(a4)
+        endif
         bsr list_show
         bsr list_fade_in
         bsr list_buttons
@@ -622,6 +672,7 @@ list_new_level:
         dbra d0,.header
         lea custom_record(pc),a0
         move.w list_sel(a4),d0
+        ifd TWO_PLAYER
         cmp.w #5,d0
         blo.s .style
         subq.w #5,d0                    ; for two players: other objects
@@ -630,6 +681,11 @@ list_new_level:
         moveq #new_level_two_end-new_level_two-1,d1
 .two:   move.b (a2)+,(a1)+
         dbra d1,.two
+        else
+        lea level_slots(pc),a1          ; the style of the entry
+        add.w d0,d0
+        move.w 0(a1,d0.w),d0
+        endif
 .style: move.w d0,$1a(a0)
         lea $120(a0),a1
         lea $760(a0),a2
@@ -658,6 +714,7 @@ new_level:
         dc.w 160,24,1,$000f             ; entrance
         dc.w 480,120,0,$000f            ; exit
 new_level_end:
+        ifd TWO_PLAYER
 ; The objects of a new level for two players: an entrance, the blue player's
 ; exit, the green player's exit and its marker (two_player_level).
 new_level_two:
@@ -666,11 +723,14 @@ new_level_two:
         dc.w 256,120,0,$000f            ; green exit
         dc.w 272,96,2,$000f             ; marker
 new_level_two_end:
+        endif
 
 txt_styles:
-        dc.b 'Dirt',0,'Fire',0,'Marble',0,'Pillar',0,'Crystal',0
+        STYLE_NAMES
+        ifd TWO_PLAYER
 txt_two_players:
         dc.b ' for two players',0
+        endif
 txt_new_title:
         dc.b 'New level                       '
         even
@@ -835,7 +895,7 @@ list_mouse:
         rts
 .line:  cmp.w #1,d2
         bne.s .none
-        move.w (TITLE_MOUSE+6).l,d0
+        move.w (MOUSE_X).l,d0
         cmp.w #160,d0
         blo.s .back
         bsr list_next
@@ -846,7 +906,7 @@ list_mouse:
 
 ; D0: text row under the mouse pointer, or -1.
 list_pointer_row:
-        move.w (TITLE_MOUSE+8).l,d0
+        move.w (MOUSE_Y).l,d0
         subq.w #8,d0
         bmi.s .none
         lsr.w #4,d0
@@ -917,11 +977,11 @@ list_select:
 ; the row palettes are set.
 list_screen:
         movem.l d0-d7/a0-a3,-(sp)
-        move.w #$50,$8c(a5)
-        move.w #$d0,$8e(a5)
-        move.l #$23680,$e0(a5)
-        jsr $1cd4
-        st $32(a5)
+        move.w #$50,G_TEXT_STRIDE(a5)
+        move.w #$d0,G_TEXT_HEIGHT(a5)
+        move.l #TEXT_SCREEN,G_TEXT_DEST(a5)
+        jsr TEXT_BACKGROUND
+        st G_TEXT_MODE(a5)
         movem.l (sp)+,d0-d7/a0-a3
         rts
 
@@ -963,7 +1023,7 @@ list_palettes:
 list_fade_in:
         movem.l d0-d7/a0-a3,-(sp)
         lea list_palette_rows(a4),a0
-        jsr $19e4
+        jsr FADE
         movem.l (sp)+,d0-d7/a0-a3
         rts
 
@@ -1021,7 +1081,7 @@ list_message_more:
         bsr list_append
         move.b #$ff,(a1)
         lea list_text(pc),a0
-        jsr $15e4
+        jsr DRAW_TEXT
         bsr list_palettes
         movem.l (sp)+,d0-d7/a0-a3
         rts
@@ -1107,7 +1167,7 @@ list_show:
 .help:  bsr list_append
         move.b #$ff,(a1)
         lea list_text(pc),a0
-        jsr $15e4
+        jsr DRAW_TEXT
         move.w list_sel(a4),d1
         add.w #LIST_FIRST,d1
         lea list_palette_rows(a4),a0
@@ -1120,10 +1180,10 @@ list_show:
         rts
 
 ; D3: list entry. D5 returns its entry in level_status and level_titles: the
-; slot on floppy, the list entry under WHDLoad.
+; slot on a level disk, the list entry with level files (FILES).
 list_status_entry:
         move.w d3,d5
-        ifnd WHDLOAD
+        ifnd FILES
         move.l a0,-(sp)
         lea level_slots(pc),a0
         add.w d5,d5
@@ -1132,7 +1192,7 @@ list_status_entry:
         endif
         rts
 
-; D5: slot (floppy) or list entry (WHDLoad). Append the number the list shows
+; D5: slot (level disk) or list entry (FILES). Append the number the list shows
 ; for it (three digits) and a space to A1. D0 is changed.
 list_number:
         move.w d5,d0
@@ -1141,7 +1201,7 @@ list_number:
         move.b #' ',(a1)+
         rts
 
-; D5: slot (floppy) or list entry (WHDLoad). Append its 32-character title
+; D5: slot (level disk) or list entry (FILES). Append its 32-character title
 ; to A1, or a damage note. The
 ; game's text routine takes ':' as a control character; show ';' instead.
 list_title:
@@ -1173,7 +1233,7 @@ list_title:
 list_format2:
         movem.l d0-d3,-(sp)
         and.l #$ffff,d0
-        jsr $1862                       ; four ASCII digits in D0
+        jsr NUMBER_DIGITS                       ; four ASCII digits in D0
         move.w d0,d1
         lsr.w #8,d1
         move.b d1,(a1)+
@@ -1185,7 +1245,7 @@ list_format2:
 list_format3:
         movem.l d0-d3,-(sp)
         and.l #$ffff,d0
-        jsr $1862
+        jsr NUMBER_DIGITS
         rol.l #8,d0
         moveq #2,d1
 .digit: rol.l #8,d0
@@ -1202,7 +1262,7 @@ list_format3:
 ; again.
 list_find_disk:
         clr.b list_retry(a4)
-        ifd WHDLOAD
+        ifd FILES
         bra list_find_files
         else
         moveq #0,d7
@@ -1344,7 +1404,7 @@ list_read_page:
         move.w d3,d0
         add.w d0,d0
         move.w 0(a0,d0.w),d5
-        ifd WHDLOAD
+        ifd FILES
         move.w d3,d6
         else
         move.w d5,d6
@@ -1384,7 +1444,7 @@ list_take_level:
 .done:  movem.l (sp)+,d0-d1/a0-a2
         rts
 
-        ifd WHDLOAD
+        ifd FILES
 ; List the .lvl files of the directory Levels and sort them by name
 ; (ignoring case). level_slots holds each name's offset in LIST_NAMES.
 list_find_files:
@@ -1572,6 +1632,8 @@ list_read_level:
         adda.l #DISK_TRACK,a1
         move.l a1,d7
         jsr resload_LoadFile(a2)
+        cmp.l #LEVEL_SIZE,d0            ; a failed read keeps the previous file
+        bne.s .damaged
         movea.l d7,a0
         bsr list_take_level
         bra.s .done
@@ -1658,7 +1720,7 @@ list_load_level:
         movem.l d1-d7/a1-a3,-(sp)
         bsr list_entry
         move.w d0,d3
-        ifd WHDLOAD
+        ifd FILES
         move.w d3,d6
         bsr list_read_level             ; the file into DISK_TRACK
         lea install(pc),a0
@@ -1741,16 +1803,21 @@ check_level_record:
         bne .bad
         moveq #0,d3
         move.w $1a(a2),d3               ; graphics style
-        cmp.w #4,d3
+        cmp.w #STYLES-1,d3
         bhi .bad
+        ifd STYLE_MASK
+        moveq #STYLE_MASK,d0            ; a style the game has
+        btst d3,d0
+        beq .bad
+        endif
         move.w $1c(a2),d4               ; special background
-        cmp.w #4,d4
+        cmp.w #SPECIALS,d4
         bhi .bad
         tst.w $1e(a2)
         bne .bad
         ; Object and piece counts of the style.
         lea (LEVELDATA).l,a1
-        mulu #$590,d3
+        mulu #STYLE_SIZE,d3
         adda.l d3,a1
         lea $70(a1),a3                  ; object descriptors
         movea.l a3,a0
@@ -1781,7 +1848,7 @@ check_level_record:
 .limits:
         ; Objects: x = 0 is an empty slot; otherwise a known type, flags
         ; $000F, $400F, $800F or $C00F, and x and y in -4096..4095. The
-        ; game's entrance table ($2D02) takes every slot of type 1, empty
+        ; game's entrance table takes every slot of type 1, empty
         ; ones too, so they count towards the four entrances.
         lea $20(a2),a0
         moveq #0,d2                     ; slot
@@ -1809,7 +1876,7 @@ check_level_record:
         cmp.w #16,d2
         bhs.s .next_object
         ; The trigger area: x >> 2 + x offset + width <= 408 and
-        ; y >> 2 + y offset + height <= 42, with x > 0 and y >= 0.
+        ; y >> 2 + y offset + height <= GRID_ROWS, with x > 0 and y >= 0.
         mulu #$22,d1
         lea $10(a3,d1.w),a1
         move.w (a0),d0
@@ -1824,7 +1891,7 @@ check_level_record:
         lsr.w #2,d0
         add.w 2(a1),d0
         add.w 6(a1),d0
-        cmp.w #42,d0
+        cmp.w #GRID_ROWS,d0
         bhi .bad
 .next_object:
         addq.l #8,a0
@@ -1857,7 +1924,7 @@ check_level_record:
         bne .bad
         cmpa.l a1,a0
         blo.s .rest
-        ; Steel: x + width <= 408 and y + height <= 41 cells (rows y + 1
+        ; Steel: x + width <= 408 and y + height <= GRID_ROWS-1 cells (rows y + 1
         ; to y + height of the grid).
         moveq #31,d2
 .steel: move.w (a0)+,d0
@@ -1877,7 +1944,7 @@ check_level_record:
         lsr.w #8,d1
         and.w #15,d1
         add.w d1,d0
-        cmp.w #40,d0
+        cmp.w #GRID_ROWS-2,d0
         bhi.s .bad
 .next_steel:
         dbra d2,.steel
@@ -1928,7 +1995,7 @@ two_player_level:
         add.w #32,d6
         moveq #0,d0
         move.w $1a(a2),d0
-        mulu #$590,d0
+        mulu #STYLE_SIZE,d0
         lea (LEVELDATA+$70).l,a3        ; object descriptors of the style
         adda.l d0,a3
         moveq #0,d4                     ; bit 0 entrance, 1 blue exit, 2 green exit
@@ -2045,12 +2112,16 @@ txt_list_of:            dc.b ' of ',0
 txt_list_damaged:       dc.b '(damaged level)',0
 txt_list_unplayable:    dc.b 'This level cannot be read or played.',0
 txt_list_again:         dc.b 'Click to look for the levels again.',0
+        ifd RELOCATED
+txt_list_searching:     dc.b 'Reading the levels...',0
+        else
 txt_list_searching:     dc.b 'Looking for the level disk...',0
+        endif
 txt_list_index:         dc.b 'The index of the level disk is',$0a
                         dc.b 'damaged. Repair it with savedisk.py',$0a
                         dc.b 'rebuild-index.',0
 txt_list_no_two:        dc.b 'There are no levels for two players.',0
-        ifd WHDLOAD
+        ifd FILES
 txt_list_no_files:
 txt_list_empty:         dc.b 'There are no .lvl files in the',$0a
                         dc.b 'directory Levels.',0

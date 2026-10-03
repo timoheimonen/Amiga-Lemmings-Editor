@@ -1,4 +1,4 @@
-; Lemmings In-Game Level Editor V2.2
+; Lemmings In-Game Level Editor V2.3
 ; Copyright (c) 2026 Timo Heimonen <timo.heimonen@proton.me>
 ; Licensed under the MIT License. See the LICENSE file for details.
 ;
@@ -15,12 +15,8 @@
 ; A4 is the editor state, A5 the game globals and A6 the custom chip base.
 
 STEEL_CODE      equ 9
-GRID            equ $58800              ; 408 x 42 cells, one byte each
 GRID_WIDTH      equ 408
-GRID_ROWS       equ 42
-GAME_ROWS       equ $a3c0               ; the game's A4: row y at y * 204
 VIEW_ROW        equ 44                  ; the level view, 320 x 160 from x 16
-VIEW_PLANE      equ $2100
 
 ; From the frame hook in steel mode: the mouse buttons. The cursor's world
 ; position is in brush_x/brush_y.
@@ -49,7 +45,7 @@ steel_input:
         st dirty(a4)
         tst.b d0
         beq.s .release
-        cmpi.w #160,($9dac).l
+        cmpi.w #160,(MOUSE_Y).l
         bhs.s .done                     ; not over the panel
         move.w d2,drag_col(a4)
         move.w d3,drag_row(a4)
@@ -68,7 +64,7 @@ steel_input:
 ; D0/D1: the first corner (column, grid row), D2/D3: the other. Return the
 ; area between them in D0/D1 (first column and row) and D2/D3 (last ones):
 ; at most 16 cells each way from the first corner, then inside the grid
-; (columns 0..407, rows 1..41). N set when nothing of it is inside.
+; (columns 0..407, rows 1..GRID_ROWS-1). N set when nothing of it is inside.
 ; Clobbers D4.
 steel_corners:
         move.w d0,d4                    ; the other corner within 15 cells
@@ -231,7 +227,7 @@ steel_draw:
         bsr.s steel_cells
         bra.s .done
 .cursor:
-        cmpi.w #160,($9dac).l
+        cmpi.w #160,(MOUSE_Y).l
         bhs.s .done
         move.w d2,d4
         move.w d3,d5
@@ -245,11 +241,11 @@ steel_draw:
 steel_cells:
         movem.l d2-d5,-(sp)
         lsl.w #2,d2
-        sub.w ($9da8).l,d2              ; left
+        sub.w (VIEW_SCROLL).l,d2              ; left
         addq.w #1,d4
         lsl.w #2,d4
         subq.w #1,d4
-        sub.w ($9da8).l,d4              ; right
+        sub.w (VIEW_SCROLL).l,d4              ; right
         lsl.w #2,d3
         subq.w #4,d3                    ; top
         addq.w #1,d5
@@ -295,7 +291,7 @@ steel_plot:
         cmp.w #159,d1
         bgt.s .out
         movem.l d0-d2/a0,-(sp)
-        movea.l $cc(a5),a0
+        movea.l G_VIEW_BACK(a5),a0
         move.w d1,d2
         mulu #VIEW_ROW,d2
         adda.l d2,a0

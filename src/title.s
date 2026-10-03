@@ -1,4 +1,4 @@
-; Lemmings In-Game Level Editor V2.2
+; Lemmings In-Game Level Editor V2.3
 ; Copyright (c) 2026 Timo Heimonen <timo.heimonen@proton.me>
 ; Licensed under the MIT License. See the LICENSE file for details.
 ;
@@ -23,36 +23,35 @@ SIGN_X_BYTE     equ 64                ; x = 512
 LETTER_ROWS     equ 27                ; rows of the sign replaced by lettering
 LETTER_TOP      equ 6                 ; first row of the lettering masks
 LETTER_HEIGHT   equ 14
-TITLE_MOUSE     equ $9da4             ; +6: x, +8: y
 
 ; Hook the rating sign, both rating arrows and the button dispatch, and the
 ; places where a custom level is started and ended (levels.s).
 title_install:
         lea custom_inject(pc),a0
-        lea ($26e6).l,a1
+        lea (HOOK_INJECT).l,a1
         bsr .jump
         move.w #$4e71,2(a1)             ; ten bytes replaced
         lea custom_won(pc),a0
-        lea ($760).l,a1
+        lea (HOOK_WON).l,a1
         bsr .jump
         lea custom_quit(pc),a0
-        lea ($818).l,a1
+        lea (HOOK_QUIT).l,a1
         bsr .jump
         move.w #$4e71,2(a1)
         lea custom_ended(pc),a0
-        lea ($706).l,a1
+        lea (HOOK_ENDED).l,a1
         bsr .jump
         lea custom_match(pc),a0
-        lea ($918).l,a1
+        lea (HOOK_MATCH).l,a1
         bsr .jump
         lea custom_match_end(pc),a0
-        lea ($9be).l,a1
+        lea (HOOK_MATCH_END).l,a1
         bsr .jump
         lea briefing_wait(pc),a0
-        lea ($3502).l,a1
+        lea (HOOK_BRIEF_WAIT).l,a1
         bsr .jump
         lea custom_brief(pc),a0
-        lea ($34aa).l,a1
+        lea (HOOK_BRIEFING).l,a1
         move.w #$4eb9,(a1)+             ; jsr, returning to $34B0
         move.l a0,(a1)+
         move.w #$4e71,(a1)
@@ -170,7 +169,7 @@ title_down:
         jmp $33ae
 .rating:
         movea.l (sp)+,a4
-        move.w $aa(a5),d0
+        move.w G_RATING(a5),d0
         bne.s .lower
         jmp $33ae
 .lower: jmp $3604
@@ -178,7 +177,7 @@ title_down:
 ; Replaces $33C0..$33C7, where a click on the title screen is dispatched.
 ; Continue at $33C8 with A3 and D0 as the game sets them.
 title_click:
-        lea (TITLE_MOUSE).l,a3
+        lea (MOUSE).l,a3
         move.w 6(a3),d0
         move.l a4,-(sp)
         lea state(pc),a4

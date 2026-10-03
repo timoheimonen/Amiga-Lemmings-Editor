@@ -1,11 +1,12 @@
-; Lemmings In-Game Level Editor V2.2
+; Lemmings In-Game Level Editor V2.3
 ; Copyright (c) 2026 Timo Heimonen <timo.heimonen@proton.me>
 ; Licensed under the MIT License. See the LICENSE file for details.
 ;
 ; Saving a custom level. S in the editor, while a custom level is edited,
 ; asks for the level's title and stores the level: on floppy into its slot of
-; the level disk (a new level into the lowest free slot), under WHDLoad as a
-; .lvl file in the directory Levels (a new level as LevelNNN.lvl). The saved
+; the level disk (a new level into the lowest free slot), under WHDLoad and in
+; Holiday Lemmings 1994 as a .lvl file in the directory Levels (a new level as
+; LevelNNN.lvl). The saved
 ; record is the edited level's record with the editor's placements after its
 ; terrain pieces; it must pass the game's checks. The menu of menu.s shows
 ; the steps.
@@ -17,6 +18,7 @@
 
 LEVEL_FULL      equ -11                 ; no free slot on the level disk
 LEVEL_OTHER     equ -12                 ; the slot holds another level
+LEVEL_UNWRITTEN equ -14                 ; the file could not be written
 
 ; From the frame hook: open the menu and ask for the title, starting with the
 ; current one. D0: 0 saves the level (S), 1 only renames it (N).
@@ -65,10 +67,10 @@ level_title_key:
         bhs.s .done
         cmp.b #$40,d0
         bhi.s .done                     ; character keys and space only
-        lea ($a526).l,a1                ; the game's raw-key to ASCII tables
+        lea (KEY_ASCII).l,a1                ; the game's raw-key to ASCII tables
         tst.b shift(a4)
         beq.s .table
-        lea ($a586).l,a1
+        lea (KEY_ASCII_SHIFT).l,a1
 .table: move.b (a1,d0.w),d0
         cmp.b #32,d0
         blo.s .done
@@ -131,7 +133,7 @@ level_save_go:
         beq.s .valid
         lea txt_level_invalid(pc),a0
         bra level_save_message
-.valid: ifd WHDLOAD
+.valid: ifd FILES
         bsr menu_show_working
         bsr level_store_file
         bra level_saved
@@ -162,12 +164,12 @@ level_saved:
 .copy:  move.l (a0)+,(a1)+
         dbra d0,.copy
         lea custom_record+$7e0(pc),a0
-        lea ($cd86).l,a1
+        lea (LEVEL_RECORD+$7e0).l,a1
         moveq #32/4-1,d0
 .title: move.l (a0)+,(a1)+
         dbra d0,.title
         lea custom_record+$120(pc),a0   ; and its pieces, which snap and undo
-        lea ($c6c6).l,a1                ; read from the game's copy
+        lea (LEVEL_RECORD+$120).l,a1                ; read from the game's copy
         move.w #$640/4-1,d0
 .pieces:
         move.l (a0)+,(a1)+
@@ -185,6 +187,13 @@ level_saved:
         lea txt_level_other(pc),a0
         cmp.l #LEVEL_OTHER,d0
         beq.s level_save_message
+        ifd FILES
+        ifnd WHDLOAD
+        lea txt_level_unwritten(pc),a0
+        cmp.l #LEVEL_UNWRITTEN,d0
+        beq.s level_save_message
+        endif
+        endif
         bsr menu_error_text
 
 ; A0: text. Show it; Return closes the menu (asking for disk 2 if needed).
@@ -244,7 +253,7 @@ level_build:
 .done:  movem.l (sp)+,d1-d2/a0-a2
         rts
 
-        ifnd WHDLOAD
+        ifnd FILES
 ; Find the level disk in a drive, or ask for it, and store the level there.
 ; Esc while a drive is read cancels the save.
 level_find_disk:
@@ -491,7 +500,7 @@ seal_level_index:
         rts
         endif
 
-        ifd WHDLOAD
+        ifd FILES
 ; There is no level disk to ask for.
 level_prompt_key:
         rts
@@ -510,9 +519,20 @@ level_store_file:
         move.l #LEVEL_SIZE,d0
         lea save_record(pc),a1
         jsr resload_SaveFile(a2)
+        ifnd WHDLOAD
+        tst.l d0                        ; WHDLoad quits when it cannot save
+        beq.s .error
+        endif
         clr.w custom_slot(a4)           ; saved under custom_file from now on
         moveq #0,d0
         bra.s .done
+        ifnd WHDLOAD
+.error: moveq #DISK_PROTECTED,d0
+        cmp.l #ERROR_DISK_WRITE_PROTECTED,d1
+        beq.s .done
+        moveq #LEVEL_UNWRITTEN,d0
+        bra.s .done
+        endif
 .fail:  moveq #DISK_REFUSED,d0
 .done:  movem.l (sp)+,d1-d7/a0-a3
         rts
@@ -580,16 +600,22 @@ txt_help_title:         dc.b 'Return: accept   Esc: back',0
 txt_level_saved:        dc.b 'The level was saved.',0
 txt_level_invalid:      dc.b 'The level cannot be saved: it is',$0a
                         dc.b 'outside the limits of the game.',0
-        ifd WHDLOAD
+        ifd FILES
 txt_level_full:         dc.b 'There is no free name from',$0a
                         dc.b 'Level001.lvl to Level999.lvl.',0
         else
 txt_level_full:         dc.b 'The level disk is full.',0
         endif
+        ifd FILES
+        ifnd WHDLOAD
+txt_level_unwritten:    dc.b 'The level could not be written.',$0a
+                        dc.b 'The disk may be full.',0
+        endif
+        endif
 txt_level_other:        dc.b 'The level disk holds another level',$0a
                         dc.b 'in this place. Insert the disk the',$0a
                         dc.b 'level came from.',0
-        ifnd WHDLOAD
+        ifnd FILES
 txt_insert_level:       dc.b 'Insert the LEVEL DISK into a drive',$0a
                         dc.b 'and press Return.',0
         endif

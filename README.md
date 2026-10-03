@@ -1,4 +1,4 @@
-# Amiga Lemmings (1991) Integrated Level Editor for 1P and 2P Levels
+# Integrated Level Editor for Amiga Lemmings and Holiday Lemmings 1994
 
 A patch that adds custom levels to Amiga Lemmings (1991): an in-game level
 editor that runs natively on the Amiga, inside the original game and its
@@ -9,6 +9,10 @@ list of your own levels, for one or two players, and New Level to create
 one. Levels are saved on a level disk and can be shared as `.lvl` files.
 For floppy (A500) and as a WHDLoad install for hard disk.
 
+Since version 2.3 the same editor is also in Holiday Lemmings 1994, on its
+floppy disk and as a WHDLoad install; see
+[Holiday Lemmings 1994](#holiday-lemmings-1994).
+
 This is version 2. Version 1.x, an editor for the terrain of the original
 levels, is a separate line; see [Version 1.x](#version-1x).
 
@@ -18,13 +22,17 @@ levels, is a separate line; see [Version 1.x](#version-1x).
 
 ![The editor in object mode, with the status block below the skill panel, on an A500](docs/images/Lemmings_level_editor_v2.jpg)
 
-More photos from an A500: [two players in a custom level](docs/images/lemmings_2p_custom.jpg)
-and [a level for two players in the editor](docs/images/lemmings_2p_custom_editor.jpg).
+More photos from an A500: [two players in a custom level](docs/images/lemmings_2p_custom.jpg),
+[a level for two players in the editor](docs/images/lemmings_2p_custom_editor.jpg),
+[Holiday Lemmings 1994 on a Gotek](docs/images/holiday_lemmings_a500_1.jpg),
+[its title screen with CUSTOM](docs/images/holiday_lemmings_a500_2.jpg) and
+[its editor in a new Snow level](docs/images/holiday_lemmings_a500_3.jpg).
 
 ## Requirements
 
 - Amiga 500, Kickstart 1.3, 512K chip + 512K slow RAM, PAL; one or more
-  drives; a second mouse (joystick port 2) for two players
+  drives; a second mouse (joystick port 2) for two players. Holiday
+  Lemmings 1994: 512K chip + 512K other memory
 - Python 3.8+ (for `patch.py` and `savedisk.py`)
 - [vasm](http://sun.hasenbraten.de/vasm/) `vasmm68k_mot` (only for `build.py`)
 - Your own copies of these disk images:
@@ -33,8 +41,10 @@ and [a level for two players in the editor](docs/images/lemmings_2p_custom_edito
 | --- | --- |
 | `Lemmings Disk 1` | `a4fdba69017f1a760bba3bb06c55f7e434226c498c9d22c1f627212b08d24f91` |
 | `Lemmings Disk 2` | `1526000b96d196efecab9c63aa72c0ce6257649a4993141b00ead8738fd97a65` |
+| `Holiday Lemmings 1994` | `bdce698427db9e186332b3989162441d354b4d9fe8de8bb5f4c3e7eac729f74f` |
 
-Other versions are rejected.
+Other versions are rejected. The Holiday Lemmings 1994 disk holds only
+standard AmigaDOS tracks, so any complete ADF of it has this hash.
 
 ## Patch
 
@@ -45,6 +55,14 @@ python3 patch.py "Disk 1.adf" -o out
 Only disk 1 is patched; the input is matched by hash and never modified.
 Output: `Lemmings_Disk1-editor-patch.adf`. Disk 2 is used unchanged (it may
 be given too, in any order; it is then only checked).
+
+```sh
+python3 patch.py "Holiday Lemmings 1994.adf" -o out
+```
+
+Holiday Lemmings 1994: the editor is added to the game's program on its
+disk, which also gets the directory `Levels` for the custom levels. Output:
+`HolidayLemmings1994-editor-patch.adf`.
 
 ## Level disk
 
@@ -65,14 +83,16 @@ original level data. Details: [level disk](docs/level-disk.md).
 
 ```sh
 python3 patch.py "Disk 1.adf" "Disk 2.adf" --whdload out/Lemmings
+python3 patch.py "Holiday Lemmings 1994.adf" --whdload out/HolidayLemmings1994
 ```
 
-Writes a WHDLoad install (slave, disk images, Workbench icon and the
-directory `Levels`) for Kickstart 2.0 or later. Custom levels are `.lvl`
-files in `Levels`; no level disk is needed. Started from its icon, WHDLoad
-writes a saved level to the hard disk, and deletes a deleted one, at once.
-See
-[whdload/README.md](whdload/README.md).
+Writes a WHDLoad install (slave, the game's disk images or files, Workbench
+icon and the directory `Levels`) for Kickstart 2.0 or later. Custom levels
+are `.lvl` files in `Levels`; no level disk is needed. Started from its
+icon, WHDLoad writes a saved level to the hard disk, and deletes a deleted
+one, at once. See [whdload/README.md](whdload/README.md).
+
+![Both games installed for WHDLoad, on Workbench 3.1](docs/images/lemmings_editor_whdload.png)
 
 ## Custom levels
 
@@ -152,7 +172,11 @@ under the cursor.
 Objects: cursor left / right select an object of the style (entrances,
 exits, traps, decorations); LMB places it or drags an existing one; RMB
 deletes it; `F` cycles the drawing mode (normal, only on terrain, behind
-terrain, both); `M` on an exit puts the two-player marker beside it.
+terrain, both); `M` on an exit puts the two-player marker beside it. The
+object at the cursor shows its animation, every frame in turn at the
+game's speed, from the frame the level starts with (how a trap springs, an
+entrance opens, water and fire move); the placed objects stay still, as
+the level is paused.
 
 Parameters: cursor up / down select the release rate, lemmings, to save,
 minutes, one of the eight skills or the start position; cursor left / right
@@ -162,6 +186,32 @@ Saving asks for the title, then writes the level to the level disk (under
 WHDLoad to its `.lvl` file; a new level gets the first free `LevelNNN.lvl`).
 Every level is checked against the game's own limits before it is saved. The
 game disks are never written to.
+
+## Holiday Lemmings 1994
+
+![The title screen with CUSTOM on the rating sign, on an A500](docs/images/holiday_lemmings_a500_2.jpg)
+
+![The editor in object mode in a new Snow level, on an A500](docs/images/holiday_lemmings_a500_3.jpg)
+
+The editor, its keys, the status block, test play and saving work as in
+Lemmings. What differs:
+
+- Click the rating sign on the title screen until it shows CUSTOM, after
+  BLIZZARD. In CUSTOM, **PLAY** opens the list of custom levels and **NEW
+  LEVEL** asks for a graphics style, Brick or Snow, for a new level. Outside
+  CUSTOM both buttons are the game's own.
+- Custom levels are `.lvl` files in the directory `HolidayLemmings1994/Levels`
+  on the game's own disk; there is no level disk. A new level is saved as the
+  first free `LevelNNN.lvl`; `Del` in the list deletes the file. The patched
+  disk has room for about 124 levels. Keep the disk write-enabled to save.
+  The files can be copied to and from the disk with any AmigaDOS tool; they
+  are the same 2048-byte level records as in Lemmings, but only levels in the
+  game's two styles are accepted.
+- The game has no two-player mode, so there is no 2 Player list and no `M`.
+- The game is an AmigaDOS program: every file access gives the hardware back
+  to the system for a moment, as the game's own loader does.
+
+Details: [Holiday Lemmings 1994](docs/holiday-lemmings-1994.md).
 
 ## Limitations
 
@@ -176,6 +226,9 @@ game disks are never written to.
   from the 2 Player list.
 - Version 2 does not use V1.x save disks: it refuses one and never writes to
   it.
+- Holiday Lemmings 1994: saving over an existing level replaces its file, so
+  a write that fails (a full disk) leaves neither version on the disk; the
+  level stays in the editor and can be saved again.
 - Needs 512K slow RAM. Without it the game boots and plays normally, just
   without custom levels.
 - The status block uses the extra lines of a PAL display; on NTSC it may be
@@ -190,9 +243,12 @@ python3 build.py
 Assembles `src/editor.s` (which includes the other sources) and
 `src/bootstrap.s`, twice: for floppy and with `WHDLOAD` defined for the
 WHDLoad install. Packs each editor image in the game's own format and checks
-the memory layout. Also assembles the WHDLoad slave and builds the install's
-icon (`whdload/build.py`), and embeds everything in the generated section of
-`patch.py`, so end users need only Python.
+the memory layout. Assembles the editor for Holiday Lemmings 1994
+(`HOLIDAY94` defined), for floppy and for WHDLoad, once with the base
+addresses of the game's hunks and once with each moved, which gives its
+relocations. Also assembles the WHDLoad slaves and builds the installs'
+icons (`whdload/build.py`), and embeds everything in the generated section
+of `patch.py`, so end users need only Python.
 
 ## How it works
 
@@ -217,17 +273,24 @@ icon (`whdload/build.py`), and embeds everything in the generated section of
   prompts and messages, and `src/disk_io.s` and
   `src/disk_codec.s` read and write the level disk directly through the disk
   hardware (MFM tracks, verified writes).
-- `patch.py` adds the bootstrap and three jump hooks to the program file and
-  puts `Editor` behind the boot loader of disk 1, using the game's own disk
-  directory.
-- `whdload/` holds the WHDLoad slave and the file access that replaces the
+- In Lemmings, `patch.py` adds the bootstrap and three jump hooks to the
+  program file and puts `Editor` behind the boot loader of disk 1, using the
+  game's own disk directory.
+- `src/game_lemmings.i` and `src/game_holiday94.i` hold everything the
+  editor knows about each game. In Holiday Lemmings 1994 the editor is two
+  more hunks of the game's program: `patch.py` adds them with their
+  relocations and writes 16 jump hooks into the game's code;
+  `src/holiday94.s` adds CUSTOM to the title screen, and `src/dos_file.s`
+  reads and writes the `.lvl` files through dos.library.
+- `whdload/` holds the WHDLoad slaves and the file access that replaces the
   floppy disk code in the WHDLoad build.
 
 ## Docs
 
 Addresses, hooks and data formats are documented in [docs/](docs/):
 [patch points](docs/patch-points.md), [memory map](docs/memory-map.md),
-[game internals](docs/game-internals.md) and [level disk](docs/level-disk.md).
+[game internals](docs/game-internals.md), [level disk](docs/level-disk.md) and
+[Holiday Lemmings 1994](docs/holiday-lemmings-1994.md).
 The WHDLoad version is documented in [whdload/docs/](whdload/docs/).
 
 ## Version 1.x

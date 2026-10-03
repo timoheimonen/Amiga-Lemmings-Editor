@@ -1,4 +1,4 @@
-; Lemmings In-Game Level Editor V2.2
+; Lemmings In-Game Level Editor V2.3
 ; Copyright (c) 2026 Timo Heimonen <timo.heimonen@proton.me>
 ; Licensed under the MIT License. See the LICENSE file for details.
 ;
@@ -22,7 +22,6 @@ M_LEAVE         equ 5
 PANEL_FG        equ 1
 PANEL_BAR       equ 2
 PANEL_HELP      equ 4
-VIEW_PALETTE    equ $850e               ; copper value word of COLOR00
 
 KEY_RETURN      equ $44
 KEY_ENTER       equ $43
@@ -47,7 +46,7 @@ menu_begin:
         clr.b native_used(a4)
         clr.b key_head(a4)
         clr.b key_tail(a4)
-        ifd WHDLOAD
+        ifd FILES
         st native_drive(a4)             ; no floppy drives
         else
         move.b 2(a5),d0                 ; CIA bit of the game's disk 2 drive
@@ -58,6 +57,14 @@ menu_begin:
         seq last_left(a4)
         btst #2,$16(a6)
         seq last_right(a4)
+        ifd FADE_STEP
+        movem.l d1-d3/d6-d7,-(sp)       ; the fade's registers but D0/A0/A1
+.fade:  tst.w G_FADE(a5)                ; the level's fade-in ends first, so
+        beq.s .faded                    ; the level colours are kept whole
+        jsr FADE_STEP
+        bra.s .fade
+.faded: movem.l (sp)+,d1-d3/d6-d7
+        endif
         lea (VIEW_PALETTE).l,a0
         lea palette_save(a4),a1
         lea menu_colours(pc),a2
@@ -92,7 +99,7 @@ menu_close:
 ; disk 2 may have been taken out for the level disk, check that disk 2 is
 ; back first and ask for it if not; the game needs it for the next level.
 menu_leave:
-        ifnd WHDLOAD
+        ifnd FILES
         tst.b native_used(a4)
         bne menu_disk2_done
         endif
@@ -141,8 +148,7 @@ menu_frame:
 menu_next_key:
         move.l a0,-(sp)
         moveq #-1,d0
-        move.w sr,-(sp)
-        ori.w #$0700,sr
+        INTS_OFF
         moveq #0,d1
         move.b key_tail(a4),d1
         cmp.b key_head(a4),d1
@@ -153,7 +159,7 @@ menu_next_key:
         addq.b #1,d1
         and.b #15,d1
         move.b d1,key_tail(a4)
-.empty: move.w (sp)+,sr
+.empty: INTS_ON
         movea.l (sp)+,a0
         rts
 
@@ -190,7 +196,7 @@ menu_key:
         beq.s .message
         cmp.b #M_LEAVE,d1
         beq.s .leave
-        ifnd WHDLOAD
+        ifnd FILES
         cmp.b #M_PROMPT_DISK2,d1
         bne.s .done
         bsr.s menu_is_return
@@ -243,7 +249,7 @@ menu_prompt_disk2:
         move.b #M_PROMPT_DISK2,menu_mode(a4)
         bra menu_draw_message
 
-        ifnd WHDLOAD
+        ifnd FILES
 ; Check that disk 2 is back in its drive: its directory starts with Ground1.
 menu_disk2_done:
         bsr menu_show_working
@@ -314,15 +320,20 @@ menu_error_text:
 ; ---------------------------------------------------------------------------
 ; Drawing. The menu uses the whole 320x160 level view as 20 rows of 40 cells.
 
-; Clear all four planes of the displayed viewport.
+; Clear the 160 rows of the displayed viewport in all four planes; the rows
+; below them can be other memory (Holiday Lemmings 1994 keeps its skill panel
+; there).
 menu_clear:
-        movem.l d0/a0,-(sp)
-        move.l $d0(a5),a0
+        movem.l d0-d1/a0,-(sp)
+        move.l G_VIEW_FRONT(a5),a0
         subq.l #2,a0
-        move.w #4*$2100/4-1,d0
+        moveq #3,d1
+.plane: move.w #160*44/4-1,d0
 .clear: clr.l (a0)+
         dbra d0,.clear
-        movem.l (sp)+,d0/a0
+        adda.l #VIEW_PLANE-160*44,a0
+        dbra d1,.plane
+        movem.l (sp)+,d0-d1/a0
         rts
 
 ; D1: row, D2: column, A0: text (NUL ends it, $0A starts the next row at the
@@ -358,7 +369,7 @@ menu_cell:
         lsl.w #3,d0
         lea font(pc),a2
         adda.w d0,a2
-        move.l $d0(a5),a1
+        move.l G_VIEW_FRONT(a5),a1
         subq.l #2,a1
         mulu #8*44,d1
         adda.l d1,a1
@@ -380,7 +391,7 @@ menu_cell:
 .no_bg: move.b d2,(a3)
         lea 44(a3),a3
         dbra d5,.line
-        adda.l #$2100,a1
+        adda.l #VIEW_PLANE,a1
         addq.w #1,d6
         cmp.w #4,d6
         blo.s .plane
@@ -414,7 +425,7 @@ menu_draw_frame:
 .title: moveq #1,d2
         moveq #PANEL_FG,d3
         bsr menu_text
-        lea $cd86,a0                    ; level title, 32 characters
+        lea LEVEL_RECORD+$7e0,a0                    ; level title, 32 characters
         lea menu_line(a4),a1
         moveq #31,d0
 .name:  move.b (a0)+,(a1)+

@@ -1,13 +1,13 @@
-; Lemmings In-Game Level Editor V2.2
+; Lemmings In-Game Level Editor V2.3
 ; Copyright (c) 2026 Timo Heimonen <timo.heimonen@proton.me>
 ; Licensed under the MIT License. See the LICENSE file for details.
 ;
-; Deleting a custom level. Del in the 1 Player list of the CUSTOM rating
-; reads the selected level afresh and asks before deleting it; only Return
-; deletes. On floppy the level's slot of the level disk is cleared in the
-; disk's update order: the data track is written and verified before the
-; index entry on track 0 is cleared. Under WHDLoad its .lvl file in the
-; directory Levels is deleted.
+; Deleting a custom level. Del in the custom level list of the CUSTOM rating
+; (not Lemmings' two-player list) reads the selected level afresh and asks
+; before deleting it; only Return deletes. On a level disk the level's slot is
+; cleared in the disk's update order: the data track is written and verified
+; before the index entry on track 0 is cleared. With level files (FILES) its
+; .lvl file in the directory Levels is deleted.
 ;
 ; A4 is the editor state, A5 the game globals and A6 the custom chip base.
 
@@ -23,7 +23,7 @@ list_delete:
         bne list_failed
         bsr list_delete_ask
         bsr list_buttons
-.wait:  jsr $196a
+.wait:  jsr WAIT_FRAME
         bsr menu_next_key
         tst.w d0
         bmi.s .mouse
@@ -49,7 +49,7 @@ list_delete:
         lea txt_list_deleting(pc),a0
         bsr list_message
         bsr list_entry
-        ifd WHDLOAD
+        ifd FILES
         bsr level_delete_file
         else
         move.w d0,d3
@@ -80,7 +80,7 @@ list_delete_read:
         move.w d5,d6
         lea level_status(pc),a0
         clr.b 0(a0,d6.w)
-        ifd WHDLOAD
+        ifd FILES
         bsr list_read_level
         moveq #0,d0
         else
@@ -127,7 +127,7 @@ list_delete_ask:
         bsr list_number
         bsr list_title
         clr.b (a1)+
-        ifd WHDLOAD
+        ifd FILES
         move.b #2,(a1)+                 ; row 7: the file name, up to 38
         move.b #7,(a1)+                 ; characters
         lea level_slots(pc),a0
@@ -145,12 +145,12 @@ list_delete_ask:
         endif
         move.b #$ff,(a1)
         lea list_text(pc),a0
-        jsr $15e4
+        jsr DRAW_TEXT
         lea list_palette_rows(a4),a0
         move.w #PAL_HEAD,4*2(a0)
         move.w #PAL_HEAD,9*2(a0)
         move.w #PAL_SELECTED,6*2(a0)
-        ifd WHDLOAD
+        ifd FILES
         move.w #PAL_SELECTED,7*2(a0)
         endif
         bsr list_palettes
@@ -159,7 +159,7 @@ list_delete_ask:
 
 ; D0: error of a deletion. A0 returns its message.
 level_delete_text:
-        ifd WHDLOAD
+        ifd FILES
         lea txt_delete_kept(pc),a0
         cmp.l #LEVEL_KEPT,d0
         beq.s .done
@@ -174,7 +174,7 @@ level_delete_text:
         bra menu_error_text
 .done:  rts
 
-        ifnd WHDLOAD
+        ifnd FILES
 ; D0: drive, D1: slot 0..317. Delete the level in the slot: its index entry
 ; must still be a level, and the slot must still hold what the question was
 ; asked about (delete_crc), so another level disk is never changed. The slot
@@ -245,15 +245,17 @@ disk_delete_level:
         rts
         endif
 
-        ifd WHDLOAD
+        ifd FILES
 ; D0: list entry. Delete its file in Levels. From a read-only file system,
 ; or with SavePath for a file that is not in the save path, WHDLoad returns
 ; without deleting it, so the file must be gone afterwards. With its write
 ; cache WHDLoad deletes a preloaded file only when it quits, and until then
 ; resload_ListFiles still lists it: the name's hash is kept in deleted_names
 ; for list_deleted (when the table is full, such a file is listed as damaged
-; until WHDLoad quits). Return D0 = 0, LEVEL_KEPT, or DISK_REFUSED without
-; the mailbox.
+; until WHDLoad quits). Through dos.library the call itself reports a file it
+; could not delete; its size alone cannot tell, as it is 0 for an empty file
+; and on any error. Return D0 = 0, LEVEL_KEPT, or DISK_REFUSED without the
+; mailbox.
 level_delete_file:
         movem.l d1-d7/a0-a3,-(sp)
         lea level_slots(pc),a0
@@ -271,6 +273,10 @@ level_delete_file:
         bne.s .done
         lea list_path(pc),a0
         jsr resload_DeleteFile(a2)
+        ifnd WHDLOAD
+        tst.l d0                        ; the system reports a failure
+        beq.s .kept
+        endif
         lea list_path(pc),a0
         jsr resload_GetFileSize(a2)
         tst.l d0
@@ -334,14 +340,14 @@ name_hash:
 
 ; Text entries for the game's text routine (column, row, text, NUL; $FF
 ; ends a list) and messages; the game's font has no ':'.
-        ifd WHDLOAD
+        ifd FILES
 txt_delete_ask:         dc.b 9,4,'This deletes the file',0
         else
 txt_delete_ask:         dc.b 9,4,'This deletes the level',0
         endif
                         dc.b 7,9,'It cannot be brought back.',0
                         dc.b 3,12,'Return deletes, right button keeps',0,$ff
-        ifd WHDLOAD
+        ifd FILES
 txt_list_deleting:      dc.b 'Deleting the file...',0
 txt_delete_kept:        dc.b 'The file could not be deleted.',0
         else
