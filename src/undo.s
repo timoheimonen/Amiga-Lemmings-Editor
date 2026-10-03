@@ -1,4 +1,4 @@
-; Lemmings In-Game Level Editor V2.2
+; Lemmings In-Game Level Editor V2.3
 ; Copyright (c) 2026 Timo Heimonen <timo.heimonen@proton.me>
 ; Licensed under the MIT License. See the LICENSE file for details.
 ;
@@ -79,7 +79,7 @@ undo_record:
 ; After a piece has been placed: an entry for it.
 undo_piece:
         movem.l d0-d2/a0-a2,-(sp)
-        tst.w ($c5c2).l                 ; a special background has no pieces
+        tst.w (LEVEL_RECORD+$1c).l                 ; a special background has no pieces
         bne .done
         bsr undo_new
         move.w #UNDO_PIECE,(a1)
@@ -312,7 +312,7 @@ undo_key:
         move.w custom_record+$18(pc),d0 ; of the parameter does
         cmp.w 8+$18(a3),d0
         beq.s .end
-        move.w d0,($9da8).l
+        move.w d0,(VIEW_SCROLL).l
         bra.s .end
         ; The history no longer matches the level's pieces (never expected,
         ; the steps are undone in order): it is dropped.
@@ -368,7 +368,7 @@ terrain_pop:
         subq.w #4,d1
         move.l 0(a0,d1.w),d0
         move.l #-1,0(a0,d1.w)
-        lea ($c6c6).l,a1
+        lea (LEVEL_RECORD+$120).l,a1
         move.l #-1,0(a1,d1.w)
 .found: addq.w #1,remaining(a4)
 .done:  movem.l (sp)+,d1/a0-a1
@@ -390,8 +390,8 @@ terrain_push:
         moveq #0,d2
         bsr composite
         bsr brush_restore
-        jsr $4b3a
-        jsr $4a78
+        jsr CLEAR_GUARDS
+        jsr MINIMAP_REFRESH
 .done:  movem.l (sp)+,d0-d7/a0-a3
         rts
 
@@ -399,7 +399,7 @@ terrain_push:
 ; rectangle (whole bytes, all planes, inside the level) and compose again
 ; every remaining piece that overlaps it, in the level's order, clipped to
 ; the rectangle (composite mode 2). The game's own terrain build cannot be
-; used: its Ground graphics have become sound data ($3850).
+; used: its Ground graphics have become sound data.
 terrain_rebuild:
         movem.l d0-d7/a0-a3,-(sp)
         bsr brush_save
@@ -433,7 +433,7 @@ terrain_rebuild:
         move.w d4,clip_rows(a4)
         ; Clear the rectangle in the four planes.
         moveq #3,d7
-        lea ($37080).l,a1
+        lea (TERRAIN).l,a1
 .plane: move.w clip_top(a4),d5
         move.w clip_rows(a4),d6
         subq.w #1,d6
@@ -447,10 +447,10 @@ terrain_rebuild:
         dbra d4,.byte
         addq.w #1,d5
         dbra d6,.row
-        adda.l #$85e0,a1
+        adda.l #TERRAIN_PLANE,a1
         dbra d7,.plane
         ; The record's pieces, then the placements, clearing the guard rows
-        ; as they were: after the level's pieces (the game's build, $2A52)
+        ; as they were: after the level's pieces (the game's build)
         ; and after every placement (the stamp). A behind piece depends on
         ; them.
         lea custom_record+$120(pc),a2
@@ -473,13 +473,13 @@ terrain_rebuild:
         bsr .guard
 .next:  subq.l #1,d6
         bpl .placed
-        jsr $4a78
+        jsr MINIMAP_REFRESH
 .restore:
         bsr brush_restore
         movem.l (sp)+,d0-d7/a0-a3
         rts
 .guard: movem.l d6/a2/a4,-(sp)
-        jsr $4b3a
+        jsr CLEAR_GUARDS
         movem.l (sp)+,d6/a2/a4
         rts
 ; D0: a piece. Compose it when it overlaps the window. D7 returns nonzero
@@ -527,7 +527,7 @@ piece_rect:
         move.w d0,d5
         asr.w #7,d5                     ; y, signed
         and.w #$3f,d0
-        movea.l $fc(a5),a0
+        movea.l G_STYLE(a5),a0
         lea $290(a0),a0
         mulu #12,d0
         adda.w d0,a0

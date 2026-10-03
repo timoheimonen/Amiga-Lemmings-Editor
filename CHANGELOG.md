@@ -1,5 +1,25 @@
 # Changelog
 
+## V2.3
+
+- Holiday Lemmings 1994: the editor in Holiday Lemmings 1994, on its floppy
+  disk and as a WHDLoad install, from its disk image (identified by its
+  SHA-256). CUSTOM follows BLIZZARD on the title screen's rating sign; in
+  CUSTOM, PLAY lists the custom levels and NEW LEVEL starts a new one in
+  Brick or Snow. Custom levels are `.lvl` files in the directory `Levels`
+  of the game's disk (under WHDLoad of the install). The editor, its keys,
+  test play, saving and deleting work as in Lemmings; the game has no
+  two-player mode.
+- WHDLoad: an install for Holiday Lemmings 1994 (the slave, its icon, the
+  game's files in `data` and `Levels`). QUIT on the title screen quits
+  WHDLoad; the game's suspend key does nothing.
+- Objects: the object at the cursor shows its animation, every frame of its
+  type in turn at the game's speed, from the frame the level starts with,
+  also while the mouse stands still. The placed objects stay still.
+- `patch.py` tells the game by the images' SHA-256:
+  `python3 patch.py "Holiday Lemmings 1994.adf"` writes the patched disk,
+  with `--whdload DIR` the WHDLoad install.
+
 ## V2.2
 
 - Deleting custom levels: `Del` in the 1 Player list asks before deleting

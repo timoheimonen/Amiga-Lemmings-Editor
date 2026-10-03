@@ -1,4 +1,4 @@
-; Lemmings In-Game Level Editor V2.2
+; Lemmings In-Game Level Editor V2.3
 ; Copyright (c) 2026 Timo Heimonen <timo.heimonen@proton.me>
 ; Licensed under the MIT License. See the LICENSE file for details.
 ;
@@ -58,7 +58,7 @@ piece_outline:
         and.w #$3f,d1
         bsr.s piece_size
         move.w d0,d2
-        sub.w ($9da8).l,d2              ; left: world x - scroll
+        sub.w (VIEW_SCROLL).l,d2              ; left: world x - scroll
         move.w d2,d4
         add.w (a0),d4
         subq.w #1,d4                    ; right
@@ -75,7 +75,7 @@ piece_outline:
 piece_size:
         move.w d1,-(sp)
         and.w #$3f,d1
-        movea.l $fc(a5),a0
+        movea.l G_STYLE(a5),a0
         lea $290(a0),a0
         mulu #12,d1
         adda.w d1,a0
@@ -91,9 +91,9 @@ piece_hover:
         moveq #-1,d6                    ; the last one found
         moveq #0,d7
         moveq #0,d5                     ; number of the next piece
-        tst.w ($c5c2).l                 ; a special background has no pieces
+        tst.w (LEVEL_RECORD+$1c).l                 ; a special background has no pieces
         bne.s .done
-        movea.l $fc(a5),a1              ; the largest width and height
+        movea.l G_STYLE(a5),a1              ; the largest width and height
         lea $290(a1),a1
         move.w piece_count(a4),d2
         subq.w #1,d2
@@ -185,7 +185,7 @@ piece_covers:
         lsr.w #3,d1
         mulu d3,d1
         move.l gfx_ptr(a4),d0
-        sub.l #$75578,d0
+        sub.l #GROUND_BASE,d0
         add.l 8(a0),d0
         add.l d1,d0
         movea.l d0,a0
@@ -214,7 +214,7 @@ record_count:
         rts
 
 ; D0: number of a piece in the level's list. Take it out of the list (the
-; record and the game's copy at $C6C6, or the placements) and return it in
+; record and the game's copy in LEVEL_RECORD, or the placements) and return it in
 ; D1. The pieces after it move down one place.
 terrain_take:
         movem.l d0/d2-d3/a0-a1,-(sp)
@@ -222,7 +222,7 @@ terrain_take:
         cmp.w d2,d0
         bhs.s .placed
         lea custom_record+$120(pc),a0
-        lea ($c6c6).l,a1
+        lea (LEVEL_RECORD+$120).l,a1
         move.w d2,d3
         sub.w d0,d3                     ; the pieces from it to the marker
         subq.w #1,d3
@@ -261,7 +261,7 @@ terrain_put:
         cmp.w d2,d0
         bhi.s .placed
         lea custom_record+$120(pc),a0
-        lea ($c6c6).l,a1
+        lea (LEVEL_RECORD+$120).l,a1
         move.w d2,d3
         lsl.w #2,d3                     ; the end marker
         move.w d0,d4

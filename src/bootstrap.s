@@ -1,4 +1,4 @@
-; Lemmings In-Game Level Editor V2.2
+; Lemmings In-Game Level Editor V2.3
 ; Copyright (c) 2026 Timo Heimonen <timo.heimonen@proton.me>
 ; Licensed under the MIT License. See the LICENSE file for details.
 ;

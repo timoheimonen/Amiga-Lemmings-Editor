@@ -1,18 +1,32 @@
-; Lemmings In-Game Level Editor V2.2
+; Lemmings In-Game Level Editor V2.3
 ; Copyright (c) 2026 Timo Heimonen <timo.heimonen@proton.me>
 ; Licensed under the MIT License. See the LICENSE file for details.
 ;
 ; Lemmings custom level editor (68000, position independent).
 ;
-; Loaded by the bootstrap into a reserved block of slow RAM and entered once at
-; "install", which patches jumps into the game's main loop, keyboard interrupt,
-; level setup and title screen. The editor edits custom levels: new ones from
-; the title screen's CUSTOM rating and the levels of a level disk (under
-; WHDLoad the .lvl files of the directory Levels). It opens by itself when an
-; edited level starts; the original levels are played unchanged. All game
-; addresses refer to the supported game version, whose disk images patch.py
+; Lemmings: loaded by the bootstrap into a reserved block of slow RAM and
+; entered once at "install", which patches jumps into the game's main loop,
+; keyboard interrupt, level setup and title screen. Holiday Lemmings 1994: two
+; hunks of the game's executable, whose hooks patch.py writes; the game's
+; start-up enters "install" (holiday94.s). The editor edits custom levels: new
+; ones from the title screen's CUSTOM rating and the levels of a level disk
+; (under WHDLoad and in Holiday Lemmings 1994 the .lvl files of the directory
+; Levels). It opens by itself when an edited level starts; the original levels
+; are played unchanged. The game's addresses come from game_lemmings.i or
+; game_holiday94.i, for the game versions whose disk images patch.py
 ; identifies by SHA-256. Inside the hooks A4 points to the editor's own state
 ; and A5 to the game's global variables.
+        ifd HOLIDAY94
+        include "game_holiday94.i"
+        else
+        include "game_lemmings.i"
+        endif
+        ifd WHDLOAD
+        ifnd FILES
+FILES           equ 1                   ; custom levels are .lvl files
+        endif
+        endif
+
 GFX             equ $b000
 GFX_MAX_BYTES   equ 42200
 EDITOR_RESERVE  equ $20000
@@ -24,13 +38,20 @@ DISK_VERIFY     equ DISK_TRACK+TRACK_BYTES
 DISK_HEADER     equ DISK_VERIFY+TRACK_BYTES
 DISK_WORK_END   equ DISK_HEADER+TRACK_BYTES
         xdef GFX_MAX_BYTES,EDITOR_RESERVE,DISK_WORK_END
+        ifd RELOCATED
+CHIP_TEXT       equ H5                ; the editor's chip hunk
+CHIP_COPPER     equ H5+TEXT_BYTES
+CHIP_BYTES      equ TEXT_BYTES+copper_end-copper_template
+        xdef CHIP_BYTES
+        else
 CHIP_TEXT       equ $21d00            ; above the bootstrap appended to Code
 CHIP_COPPER     equ $22c00
+        endif
         xdef CHIP_TEXT,CHIP_COPPER
 TEXT_BYTES      equ 3840
 TRACK_BYTES     equ 11*512
 MAX_PLACEMENTS  equ 399               ; terrain pieces of a level: the list needs an end marker
-DELETED_MAX     equ 32                ; WHDLoad: names deleted in this session (level_delete.s)
+DELETED_MAX     equ 32                ; FILES: names deleted in this session (level_delete.s)
 
 ; Editor state, relative to "state".
         rsreset
@@ -85,14 +106,15 @@ list_page       rs.w 1
 list_sel        rs.w 1              ; selected row on the page
 list_count      rs.w 1              ; levels on the level disk
 list_hover      rs.w 1              ; text row the pointer was on
-custom_number   rs.w 1              ; list number (floppy: slot + 1), 0 for a new level
-custom_slot     rs.w 1              ; its slot (floppy), list entry (WHDLoad), -1 new
-list_old42      rs.w 1              ; the game's level $42(A5) when the list opened
+custom_number   rs.w 1              ; list number (level disk: slot + 1), 0 for a new level
+custom_slot     rs.w 1              ; its slot (level disk), list entry (FILES), -1 new
+list_old42      rs.w 1              ; the game's level (G_LEVEL) when the list opened
 drag_col        rs.w 1              ; first cell of a steel area being dragged
 drag_row        rs.w 1
 obj_type        rs.w 1              ; object type placed by the left button (objects.s)
 obj_flags       rs.w 1              ; its drawing flags
 obj_hover       rs.w 1              ; slot of the object under the cursor, or -1
+obj_frame       rs.w 1              ; frame of the preview; -1: the type's start frame
 obj_dx          rs.w 1              ; cursor minus the dragged object's position
 obj_dy          rs.w 1
 snap_x          rs.w 1              ; the nearest position beside a neighbour (snap)
@@ -108,9 +130,12 @@ snap_reach_y    rs.w 1
 snap_key        rs.w 1              ; mask of snap_xs..snap_ye: piece + 1, $100 + object type, 0 none
 palette_save    rs.w 5              ; view colours replaced by the menu
 list_palette_rows rs.w 13           ; palette number of each text row of the list
-        ifd WHDLOAD
+        ifd FILES
 deleted_names   rs.l DELETED_MAX      ; hashes of the file names deleted in this session
 deleted_count   rs.w 1
+        endif
+        ifd RELOCATED
+dos_window      rs.l 1              ; the process's requester window (dos_file.s)
         endif
 active          rs.b 1              ; the editor is open
 negative        rs.b 1              ; the brush erases
@@ -137,7 +162,7 @@ custom_tier     rs.b 1              ; the title screen shows CUSTOM
 list_open       rs.b 1              ; the custom level list takes the keys
 list_drive      rs.b 1
 title_disk      rs.b 1              ; transport runs on the title screen
-list_old32      rs.b 1              ; the game's text mode flag $32(A5)
+list_old32      rs.b 1              ; the game's text mode flag (G_TEXT_MODE)
 list_retry      rs.b 1              ; a click searches for the disk again
 custom_play     rs.b 1              ; the game plays custom_record
 list_played     rs.b 1              ; a custom level was played from the list
@@ -169,16 +194,25 @@ undo_open       rs.b 1              ; a range was taken for an edit in progress
 undo_lost_kind  rs.b 1              ; what undo_lost holds: 0 or UNDO_LOST_OLDEST/_NEXT
 undo_lost_redo  rs.b 1              ; redo_count before that entry was lost
 delete_mode     rs.b 1              ; Shift in the erasing mode: deleting pieces (delete.s)
+        ifd G_TRIES
+list_old_tries  rs.b 1              ; the game's failed tries (G_TRIES) when the list opened
+        endif
 key_queue       rs.b 16             ; raw key codes for the menu and the list
 menu_line       rs.b 42             ; a text line
         rseven
 STATE_SIZE      rs.b 0
 
+        ifd EDITOR_ORG
+        org EDITOR_ORG                  ; patch.py: finds addresses of the editor
+        else
         org 0
-; Install the hooks: keyboard interrupt ($174E), frame start ($654), gameplay
-; input ($680), level setup ($2762), end of frame drawing ($688), the title
-; screen and the custom levels' hooks (title.s). Also prepares the font and
-; the copper list continuation for the status block.
+        endif
+; Install the hooks: keyboard interrupt (HOOK_KEYBOARD), frame start
+; (HOOK_FRAME), gameplay input (HOOK_ACTIONS), level setup (HOOK_CAPTURE), end
+; of frame drawing (HOOK_OVERLAY), the title screen and the custom levels'
+; hooks (title.s); in a relocated editor (RELOCATED) patch.py has written the
+; hooks into the game's program. Also prepares the font and the copper list
+; continuation for the status block.
 install:
         movem.l d0-d7/a0-a6,-(sp)
         lea state(pc),a4
@@ -186,40 +220,54 @@ install:
         move.w #(storage_end-state)/2-1,d0
 .clear: clr.w (a0)+
         dbra d0,.clear
-        movea.l $f8(a5),a0
+        ifd RELOCATED
+        lea install(pc),a0
+        else
+        movea.l G_CACHE_END(a5),a0
+        endif
         adda.l #GFX,a0
         move.l a0,gfx_ptr(a4)
+        ifd RELOCATED
+        bsr prepare_font                ; patch.py has written the hooks
+        else
         lea keyboard(pc),a0
         move.w sr,-(sp)
         ori.w #$0700,sr                 ; the keyboard interrupt must never
-        move.l a0,$1750                 ; run a half-written jump
-        move.w #$4ef9,$174e
-        move.l #$4e714e71,$1754
-        move.w #$4e71,$1758
+        move.l a0,HOOK_KEYBOARD+2                 ; run a half-written jump
+        move.w #$4ef9,HOOK_KEYBOARD
+        move.l #$4e714e71,HOOK_KEYBOARD+6
+        move.w #$4e71,HOOK_KEYBOARD+10
         move.w (sp)+,sr
         bsr prepare_font
         lea frame(pc),a0
-        move.l a0,$656
-        move.w #$4ef9,$654
-        move.w #$4e71,$65a
+        move.l a0,HOOK_FRAME+2
+        move.w #$4ef9,HOOK_FRAME
+        move.w #$4e71,HOOK_FRAME+6
         lea actions(pc),a0
-        move.l a0,$682
-        move.w #$4ef9,$680
-        move.w #$4e71,$686
+        move.l a0,HOOK_ACTIONS+2
+        move.w #$4ef9,HOOK_ACTIONS
+        move.w #$4e71,HOOK_ACTIONS+6
         lea capture(pc),a0
-        move.l a0,$2764
-        move.w #$4ef9,$2762
-        move.w #$4e71,$2768
+        move.l a0,HOOK_CAPTURE+2
+        move.w #$4ef9,HOOK_CAPTURE
+        move.w #$4e71,HOOK_CAPTURE+6
         lea overlay(pc),a0
-        move.l a0,$68a
-        move.w #$4ef9,$688
-        move.w #$4e71,$68e
+        move.l a0,HOOK_OVERLAY+2
+        move.w #$4ef9,HOOK_OVERLAY
+        move.w #$4e71,HOOK_OVERLAY+6
         bsr title_install
+        endif
         lea copper_template(pc),a0
         lea CHIP_COPPER,a1
         move.w #(copper_end-copper_template)/2-1,d0
 .copy:  move.w (a0)+,(a1)+
         dbra d0,.copy
+        ifd RELOCATED
+        move.l #CHIP_TEXT,d0            ; the bitplane pointer of the status block
+        move.w d0,CHIP_COPPER+COPPER_TEXT+6
+        swap d0
+        move.w d0,CHIP_COPPER+COPPER_TEXT+2
+        endif
         movem.l (sp)+,d0-d7/a0-a6
         rts
 
@@ -229,7 +277,7 @@ install:
 ; graphics set and opens the editor at the first frame, except for a test
 ; play.
 capture:
-        jsr $280a
+        jsr SELECT_STYLE
         movem.l d0-d7/a0-a6,-(sp)
         lea state(pc),a4
         bsr hide_status
@@ -252,6 +300,7 @@ capture:
         clr.b undo_open(a4)             ; a drag's range, taken when it began
         bsr undo_break                  ; a change after a test play is a new step
         move.w #-1,obj_hover(a4)
+        move.w #-1,obj_frame(a4)
         clr.b pending_mode(a4)
         clr.b pending_select(a4)
         clr.b pending_escape(a4)
@@ -263,19 +312,19 @@ capture:
         clr.b custom_test(a4)
         bsr count_placements
         lea ground_name(pc),a0
-        move.w $c5c0,d0
-        cmp.w #4,d0
+        move.w LEVEL_RECORD+$1a,d0
+        cmp.w #STYLES-1,d0
         bhi.s .done
         add.b #'1',d0
         move.b d0,6(a0)
         movea.l gfx_ptr(a4),a1
         moveq #0,d1
-        jsr $3286
+        jsr LOAD_FILE
         movea.l gfx_ptr(a4),a0
         movea.l a0,a1
         move.l d1,d0
-        jsr $3934
-        movea.l $fc(a5),a0
+        jsr UNPACK
+        movea.l G_STYLE(a5),a0
         lea $290(a0),a0
         moveq #0,d0
 .count: tst.w (a0)
@@ -290,8 +339,8 @@ capture:
         move.w d0,piece_count(a4)
         sne valid(a4)
 .done:  movem.l (sp)+,d0-d7/a0-a6
-        jsr $2826
-        jmp $276a
+        jsr INIT_SIMULATION
+        jmp CAPTURE_DONE
 
 ; Capture press edges before the original CIA acknowledgement. Releases never
 ; overwrite queued presses, so a quick tap survives a long brush render. Keys
@@ -299,7 +348,7 @@ capture:
 ; editor, its menu or the list reaches the game as a release, so it never
 ; ends the level.
 keyboard:
-        move.b d0,$26(a5)
+        move.b d0,G_RAW_KEY(a5)
         lea state(pc),a4
         bsr editor_shift                ; in every state, so it never sticks
         tst.b disk_busy(a4)
@@ -353,7 +402,7 @@ keyboard:
         beq.s .ack
         eori.b #1,pending_behind(a4)
 .ack:   move.b #0,$bfec01
-        jmp $175a
+        jmp KEYBOARD_DONE
 
 ; D0: raw key. Track the shift keys: steps of ten, redo, deleting pieces and
 ; the title's shifted characters.
@@ -385,12 +434,12 @@ frame:
         tst.b valid(a4)
         beq.s .input
         st active(a4)
-        st $39(a5)
+        st G_PAUSE(a5)
         btst #6,$bfe001
         seq last_left(a4)
         btst #2,$16(a6)
         seq last_right(a4)
-        clr.l $144f2           ; hide the skill-selection sprite
+        clr.l SKILL_SPRITE           ; hide the skill-selection sprite
         bsr show_status
         st disk_redraw(a4)     ; draw the preview even if nothing moves
 .input: move.b disk_redraw(a4),dirty(a4)
@@ -414,8 +463,11 @@ frame:
         bra .game
 .menu_idle:
         movem.l (sp)+,d0-d7/a0-a6
-        clr.w $3e(a5)
-        jmp $646
+        clr.w G_FRAMES(a5)
+        ifd FADE_STEP
+        jsr FADE_STEP                   ; the level's fade-in goes on
+        endif
+        jmp FRAME_WAIT
 .editor_input:
         move.b pending_undo(a4),d0      ; U: undo, Shift+U: redo
         beq.s .behind_key
@@ -444,8 +496,7 @@ frame:
         not.b snap(a4)
         st dirty(a4)
 .inputs:
-        move.w sr,-(sp)
-        ori.w #$0700,sr
+        INTS_OFF
         moveq #0,d6
         move.w pending_toggle(a4),d0
         move.b d0,d6
@@ -456,7 +507,7 @@ frame:
         clr.b pending_select(a4)
         move.b pending_escape(a4),d4
         clr.b pending_escape(a4)
-        move.w (sp)+,sr
+        INTS_ON
         lsr.w #8,d0
         tst.b d4
         beq.s .toggle
@@ -472,9 +523,9 @@ frame:
         beq.s .cycle
         tst.b custom_edit(a4)
         beq.s .cycle
-        tst.b $29(a5)           ; not during level completion
+        tst.b G_LEVEL_ENDING(a5)           ; not during level completion
         bne.s .cycle
-        tst.b $2d(a5)
+        tst.b G_ALL_OUT(a5)
         beq custom_toggle
 .cycle: move.w d6,d0
         tst.b active(a4)
@@ -502,7 +553,7 @@ frame:
         move.w d0,piece_id(a4)
         bra.s .wrap_high
 .buttons:
-        st $39(a5)
+        st G_PAUSE(a5)
         bsr mode_switch
         tst.b d7                        ; F
         beq.s .brush
@@ -525,6 +576,7 @@ frame:
         bmi.s .steel
         bne .done                       ; parameters: keys only
         bsr object_input
+        bsr object_animate
         bra .done
 .steel: bsr steel_input
         bra .done
@@ -548,12 +600,12 @@ frame:
         beq .done
         tst.b delete_mode(a4)           ; Shift while erasing: delete a piece
         beq.s .place
-        cmpi.w #160,$9dac
+        cmpi.w #160,MOUSE_Y
         bhs .done
         bsr piece_delete
         bra .done
 .place: bsr brush_snap                  ; where the preview shows the piece
-        cmpi.w #160,$9dac
+        cmpi.w #160,MOUSE_Y
         bhs .done
         tst.w remaining(a4)
         beq .done
@@ -568,19 +620,19 @@ frame:
         move.w brush_y(a4),d1
         moveq #0,d2
         bsr composite
-        jsr $4b3a
-        jsr $4a78
+        jsr CLEAR_GUARDS
+        jsr MINIMAP_REFRESH
         addq.l #1,paint_count(a4)
         bsr undo_piece
         st dirty(a4)
 .done:  tst.b active(a4)
-        beq.s .game
+        beq .game
         tst.b dirty(a4)
         bne.s .redraw
-        move.w $9da8,d0
+        move.w VIEW_SCROLL,d0
         cmp.w last_scroll(a4),d0
         bne.s .redraw
-        move.w $9dac,d0
+        move.w MOUSE_Y,d0
         cmp.w #160,d0
         blo.s .viewport
         ; Cursor over the panel: there is no preview to move, so only the
@@ -589,30 +641,33 @@ frame:
         cmpi.w #160,last_y(a4)
         blo.s .redraw
         move.w d0,last_y(a4)
-        move.w $9daa,last_x(a4)
+        move.w MOUSE_X,last_x(a4)
         bsr coordinates
         bsr status_values
         bra.s .idle
 .viewport:
         cmp.w last_y(a4),d0
         bne.s .redraw
-        move.w $9daa,d0
+        move.w MOUSE_X,d0
         cmp.w last_x(a4),d0
         bne.s .redraw
 .idle:  movem.l (sp)+,d0-d7/a0-a6
-        clr.w $3e(a5)
-        jmp $646
+        clr.w G_FRAMES(a5)
+        ifd FADE_STEP
+        jsr FADE_STEP                   ; the level's fade-in goes on
+        endif
+        jmp FRAME_WAIT
 .redraw:
-        move.w $9daa,last_x(a4)
-        move.w $9dac,last_y(a4)
-        move.w $9da8,last_scroll(a4)
+        move.w MOUSE_X,last_x(a4)
+        move.w MOUSE_Y,last_y(a4)
+        move.w VIEW_SCROLL,last_scroll(a4)
         movem.l (sp)+,d0-d7/a0-a6
-        clr.w $3e(a5)
-        jmp $65c
+        clr.w G_FRAMES(a5)
+        jmp FRAME_STEP
 .game:  movem.l (sp)+,d0-d7/a0-a6
-        jsr $1898
-        clr.w $3e(a5)
-        jmp $65c
+        jsr SWAP_BUFFERS
+        clr.w G_FRAMES(a5)
+        jmp FRAME_STEP
 
 ; The level's terrain pieces up to the end marker, and the room left for the
 ; brush: at most MAX_PLACEMENTS pieces in all. A special background has no
@@ -620,10 +675,10 @@ frame:
 ; level could not be saved with them.
 count_placements:
         move.w #MAX_PLACEMENTS,d0
-        tst.w $c5c2
+        tst.w LEVEL_RECORD+$1c
         bne.s .counted
         moveq #0,d0
-        lea $c6c6,a0
+        lea LEVEL_RECORD+$120,a0
 .scan:  cmpi.l #-1,(a0)+
         beq.s .counted
         addq.w #1,d0
@@ -673,29 +728,29 @@ record_placement:
 
 ; Scroll the level while the cursor touches the left or right screen edge.
 scroll:
-        cmpi.w #160,$9dac
+        cmpi.w #160,MOUSE_Y
         bhs .done
-        tst.w $9daa
+        tst.w MOUSE_X
         bne.s .right
-        subi.w #16,$9da8
+        subi.w #16,VIEW_SCROLL
         bpl.s .done
-        clr.w $9da8
+        clr.w VIEW_SCROLL
         rts
-.right: cmpi.w #319,$9daa
+.right: cmpi.w #319,MOUSE_X
         bne.s .done
-        addi.w #16,$9da8
-        cmpi.w #1280,$9da8
+        addi.w #16,VIEW_SCROLL
+        cmpi.w #1280,VIEW_SCROLL
         bls.s .done
-        move.w #1280,$9da8
+        move.w #1280,VIEW_SCROLL
 .done:  rts
 
 ; Cursor position in level coordinates.
 coordinates:
-        move.w $9daa,d0
-        add.w $9da8,d0
+        move.w MOUSE_X,d0
+        add.w VIEW_SCROLL,d0
         add.w #16,d0
         move.w d0,brush_x(a4)
-        move.w $9dac,d0
+        move.w MOUSE_Y,d0
         addq.w #4,d0
         move.w d0,brush_y(a4)
         rts
@@ -737,10 +792,10 @@ brush_snap:
         sub.w d3,d5
         moveq #-1,d6
         movea.w piece_id(a4),a2         ; kept in a register for the scan
-        tst.w $c5c2                     ; a special background has no pieces
+        tst.w LEVEL_RECORD+$1c                     ; a special background has no pieces
         bne.s .placed
-        lea $c6c6,a0
-        lea $cd06,a1
+        lea LEVEL_RECORD+$120,a0
+        lea LEVEL_RECORD+$760,a1
         bsr.s .scan
 .placed:
         lea placements(pc),a0
@@ -964,7 +1019,7 @@ mask_bounds:
 
 ; Size and graphics of the selected piece, from the level's style data.
 descriptor:
-        movea.l $fc(a5),a0
+        movea.l G_STYLE(a5),a0
         move.w piece_id(a4),d0
         mulu #12,d0
         lea $290(a0),a0
@@ -977,7 +1032,7 @@ descriptor:
         mulu 2(a0),d0
         move.l d0,plane_size(a4)
         move.l gfx_ptr(a4),d1
-        sub.l #$75578,d1
+        sub.l #GROUND_BASE,d1
         move.l 4(a0),d0
         add.l d1,d0
         move.l d0,image_ptr(a4)
@@ -992,15 +1047,15 @@ actions:
         lea state(pc),a0
         tst.b active(a0)
         bne.s .skip
-        jsr $b4a
-        jsr $14e2
-.skip:  jmp $688
+        jsr PLAY_MOUSE
+        jsr PLAY_KEYS
+.skip:  jmp HOOK_OVERLAY
 
 ; End of frame drawing: draw the brush preview and update the status block
 ; before the new frame is shown.
 overlay:
-        jsr $1f52
-        jsr $4aa4
+        jsr PANEL_REFRESH
+        jsr MINIMAP_COLUMN
         movem.l d0-d7/a0-a6,-(sp)
         lea state(pc),a4
         tst.b active(a4)
@@ -1019,7 +1074,7 @@ overlay:
         bra.s .status
 .steel: bsr steel_draw
         bra.s .status
-.brush: cmpi.w #160,$9dac
+.brush: cmpi.w #160,MOUSE_Y
         bhs.s .status
         tst.b delete_mode(a4)           ; deleting: the cursor and an outline
         beq.s .preview
@@ -1028,7 +1083,7 @@ overlay:
 .preview:
         bsr brush_snap
         move.w brush_x(a4),d0           ; into the back buffer
-        sub.w $9da8,d0
+        sub.w VIEW_SCROLL,d0
         move.w brush_y(a4),d1
         subq.w #4,d1
         moveq #1,d2
@@ -1041,9 +1096,9 @@ overlay:
 .values:
         bsr status_values
 .shown:
-        jsr $1898
+        jsr SWAP_BUFFERS
 .done:  movem.l (sp)+,d0-d7/a0-a6
-        jmp $690
+        jmp OVERLAY_DONE
 
 ; CPU masked compositor. D0/D1 identify the cursor in the target surface and
 ; D2 selects the target: 0 = world terrain, 1 = viewport back buffer (preview),
@@ -1074,8 +1129,8 @@ composite:
         move.w d1,origin_y(a4)
         cmp.w #1,d2
         beq.s .preview
-        move.l #$37080,dest_ptr(a4)
-        move.l #$85e0,dplane(a4)
+        move.l #TERRAIN,dest_ptr(a4)
+        move.l #TERRAIN_PLANE,dplane(a4)
         move.w #204,row_stride(a4)
         tst.w d2
         bne.s .setup                    ; mode 2: the caller's clip window
@@ -1085,8 +1140,8 @@ composite:
         move.w #204,clip_span(a4)
         bra.s .setup
 .preview:
-        move.l $cc(a5),dest_ptr(a4)
-        move.l #$2100,dplane(a4)
+        move.l G_VIEW_BACK(a5),dest_ptr(a4)
+        move.l #VIEW_PLANE,dplane(a4)
         move.w #44,row_stride(a4)
         clr.w clip_top(a4)
         move.w #160,clip_rows(a4)
@@ -1243,16 +1298,28 @@ show_status:
         movem.l d0-d7/a0-a3,-(sp)  ; the frame hook keeps queued input in D6/D7
         bsr status_full
         movem.l (sp)+,d0-d7/a0-a3
-        move.w #$24c1,$84ee
-        move.l #$00840000+(CHIP_COPPER>>16),$8668
-        move.l #$00860000+(CHIP_COPPER&$ffff),$866c
-        move.l #$008a0000,$8670
+        move.w #$24c1,COPPER_DIWSTOP
+        ifd RELOCATED
+        move.l #CHIP_COPPER,d1
+        move.l d1,d0
+        clr.w d0
+        swap d0
+        or.l #$00840000,d0
+        move.l d0,COPPER_END            ; COP2LCH
+        and.l #$ffff,d1
+        or.l #$00860000,d1
+        move.l d1,COPPER_END+4          ; COP2LCL
+        else
+        move.l #$00840000+(CHIP_COPPER>>16),COPPER_END
+        move.l #$00860000+(CHIP_COPPER&$ffff),COPPER_END+4
+        endif
+        move.l #$008a0000,COPPER_END+8
         rts
 hide_status:
-        move.w #$f4c1,$84ee
-        move.l #$f401ff00,$8668
-        move.l #$009c8010,$866c
-        move.l #$fffffffe,$8670
+        move.w #$f4c1,COPPER_DIWSTOP
+        move.l #$f401ff00,COPPER_END
+        move.l #$009c8010,COPPER_END+4
+        move.l #$fffffffe,COPPER_END+8
         rts
 
 ; Six 80-character rows in the existing 640x48 hires bitmap: four aligned
@@ -1278,7 +1345,7 @@ status_full:
 
 ; The level title in the footer, after the snap field.
 status_title:
-        lea $cd86,a2
+        lea LEVEL_RECORD+$7e0,a2
         lea CHIP_TEXT+5*640,a3
         move.w #17*8,d4
         moveq #31,d6
@@ -1438,7 +1505,7 @@ number:
         moveq #2,d6
 .digits:
         and.l #$ffff,d0
-        jsr $1862                       ; four ASCII digits, changes D0..D3
+        jsr NUMBER_DIGITS                       ; four ASCII digits, changes D0..D3
         move.l d0,d5
         cmp.w #2,d6
         bne.s .loop
@@ -1492,7 +1559,12 @@ glyph:
 copper_template:
         dc.w $f401,$ff00,$009c,$8010
         dc.w $0100,$9200,$0102,0,$0108,0,$010a,0
+COPPER_TEXT     equ *-copper_template
+        ifd RELOCATED
+        dc.w $00e0,0,$00e2,0,$0182,$0fff ; set by install
+        else
         dc.w $00e0,CHIP_TEXT>>16,$00e2,CHIP_TEXT&$ffff,$0182,$0fff
+        endif
         dc.w $ffff,$fffe
 copper_end:
 ground_name: dc.b 'Ground1',0
@@ -1606,14 +1678,19 @@ font_source:
 
         even
 
-; The image is stored packed in the file Editor on disk 1, behind the boot
-; loader; the bootstrap unpacks it into the reserved block.
-        ifnd WHDLOAD
+; In Lemmings the image is stored packed in the file Editor on disk 1, behind
+; the boot loader, and the bootstrap unpacks it into the reserved block; in
+; Holiday Lemmings 1994 it is a hunk of the game's program.
+        ifnd FILES
         include "disk_codec.s"
         endif
         include "disk_io.s"
         include "menu.s"
+        ifd HOLIDAY94
+        include "holiday94.s"
+        else
         include "title.s"
+        endif
         include "levels.s"
         include "level_save.s"
         include "level_delete.s"
@@ -1634,10 +1711,10 @@ level_slots     equ save_record+2048 ; occupied level disk slots in order
 level_status    equ level_slots+318*2
 level_titles    equ level_status+320
 list_text       equ level_titles+318*32
-list_path       equ list_text+600   ; WHDLoad: Levels/ and a name of up to 107 characters
+list_path       equ list_text+600   ; FILES: Levels/ and a name of up to 107 characters
 custom_record   equ list_path+116   ; the custom level being played
 title_buf       equ custom_record+2048 ; 32 characters, NUL, and a spare NUL
-custom_file     equ title_buf+34    ; WHDLoad: the file name of the edited level
+custom_file     equ title_buf+34    ; FILES: the file name of the edited level
 undo_entries    equ custom_file+108 ; UNDO_STEPS entries and a spare one (undo.s)
 undo_lost       equ undo_entries+(UNDO_STEPS+1)*UNDO_ENTRY ; dropped by undo_new
 storage_end     equ undo_lost+UNDO_ENTRY

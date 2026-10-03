@@ -1,4 +1,4 @@
-; Lemmings In-Game Level Editor V2.2
+; Lemmings In-Game Level Editor V2.3
 ; Copyright (c) 2026 Timo Heimonen <timo.heimonen@proton.me>
 ; Licensed under the MIT License. See the LICENSE file for details.
 ;
@@ -10,9 +10,14 @@
 ; cursor. Every object is outlined. With snap on (G), a placed or moved
 ; object joins the side of the nearest object of the same type.
 ;
+; The preview at the cursor shows its type's animation: every frame in turn,
+; one per game step, from the frame the level's start shows, also while the
+; mouse stands still. Placed objects keep their frames: the level stays
+; paused.
+;
 ; Objects keep their slots in custom_record. A new object takes a free slot:
 ; one with a trigger area (an exit, a trap) the lowest of the first 16 slots,
-; the only ones the game gives trigger cells ($2476), any other the lowest of
+; the only ones the game gives trigger cells (OBJECT_GRID), any other the lowest of
 ; slots 16..31, or of the first 16 when these are full. A position must stay
 ; inside the game's limits: x > 0 (x = 0 is an empty slot), y >= 0 and, in the
 ; first 16 slots, the trigger area inside the attribute grid; at most four
@@ -21,19 +26,19 @@
 ; up from the record.
 ;
 ; The game draws each object with its record position as x - scroll and y in
-; the view's back buffer ($23D8, $2414); the preview uses the same blitter
-; routine ($704C) and the same coordinates.
+; the view's back buffer; the preview uses the same blitter routine (BLIT)
+; and the same coordinates. Its frames come from the style's descriptors,
+; whose frame pointers are relative to OBJECT_BASE.
 ;
 ; A4 is the editor state, A5 the game globals and A6 the custom chip base.
 
-OBJECTS         equ $c5c6               ; the game's copy of the objects
 OBJECT_DESC     equ $70                 ; descriptors in the style's leveldata
 OBJECT_SIZE     equ $22
 MAX_ENTRANCES   equ 4
 
 ; D0: object type. Return its descriptor in A0.
 object_desc:
-        movea.l $fc(a5),a0
+        movea.l G_STYLE(a5),a0
         lea OBJECT_DESC(a0),a0
         mulu #OBJECT_SIZE,d0
         adda.w d0,a0
@@ -74,6 +79,7 @@ object_cycle:
         sub.w d0,d1
         bra.s .high
 .set:   move.w d1,obj_type(a4)
+        move.w #-1,obj_frame(a4)        ; the new type from its start frame
         or.b #1,status_dirty(a4)
         st dirty(a4)
 .done:  rts
@@ -133,7 +139,7 @@ object_input:
         move.b d0,last_left(a4)
         tst.b d0
         beq.s .release
-        cmpi.w #160,($9dac).l
+        cmpi.w #160,(MOUSE_Y).l
         bhs.s .done                     ; not over the panel
         move.w obj_hover(a4),d0
         bmi.s .place
@@ -153,6 +159,7 @@ object_input:
         move.w d0,obj_dy(a4)
         bra.s .done
 .place: bsr object_place
+        bsr object_hover                ; the new object is under the cursor
         bra.s .done
 .release:
         tst.b obj_drag(a4)
@@ -161,21 +168,59 @@ object_input:
 .done:  movem.l (sp)+,d0-d7/a0-a2
         rts
 
+; From the frame hook in the objects mode, once per game step: while the
+; preview is shown (no object under the cursor or dragged, the cursor above
+; the panel), its next frame, after the last the first; the view is redrawn
+; with it. A type with one frame stays as it is.
+object_animate:
+        movem.l d0/d6/a0,-(sp)
+        tst.b obj_drag(a4)
+        bne.s .done
+        tst.w obj_hover(a4)
+        bpl.s .done
+        cmpi.w #160,(MOUSE_Y).l
+        bhs.s .done
+        move.w obj_type(a4),d0
+        bsr object_desc
+        cmpi.w #1,4(a0)
+        bls.s .done
+        bsr.s object_frame
+        cmp.w obj_frame(a4),d6
+        bne.s .set                      ; a new preview: its start frame first
+        addq.w #1,d6
+        cmp.w 4(a0),d6
+        blo.s .set
+        moveq #0,d6
+.set:   move.w d6,obj_frame(a4)
+        st dirty(a4)
+.done:  movem.l (sp)+,d0/d6/a0
+        rts
+
+; A0: the descriptor of the preview's type. D6 returns the preview's frame:
+; obj_frame, or the type's start frame when obj_frame is none of its frames
+; (-1 after a new type, mode or level).
+object_frame:
+        move.w obj_frame(a4),d6
+        cmp.w 4(a0),d6
+        blo.s .done
+        move.w 2(a0),d6
+.done:  rts
+
 ; The object under the cursor: the last slot whose object covers the cursor's
 ; pixel, or -1. The status block shows it.
 object_hover:
         movem.l d0-d7/a0-a1,-(sp)
         moveq #-1,d7
-        move.w ($9daa).l,d2
+        move.w (MOUSE_X).l,d2
         add.w #16,d2                    ; cursor in the back buffer
-        move.w ($9dac).l,d3
+        move.w (MOUSE_Y).l,d3
         cmp.w #160,d3
         bhs.s .found
         lea (OBJECTS+31*8).l,a1
         moveq #31,d6
 .slot:  move.w (a1),d4
         beq.s .next
-        sub.w ($9da8).l,d4              ; left
+        sub.w (VIEW_SCROLL).l,d4              ; left
         move.w 2(a1),d5                 ; top
         move.w 4(a1),d0
         bsr object_desc
@@ -389,11 +434,12 @@ object_snap:
         bsr object_desc
         move.w 6(a0),d2
         move.w 8(a0),d3
-        move.w 2(a0),d6                 ; the mask of its first frame
+        move.w 2(a0),d6                 ; the mask of its start frame
         mulu $a(a0),d6
         movea.l $1a(a0),a1
         adda.l d6,a1
         adda.w $c(a0),a1
+        adda.l #OBJECT_BASE,a1
         movea.l a1,a0
         move.w a2,d0
         add.w #$100,d0
@@ -469,7 +515,7 @@ object_fits:
         lsr.w #2,d1
         add.w $12(a0),d1
         add.w $16(a0),d1
-        cmp.w #42,d1
+        cmp.w #GRID_ROWS,d1
         bhi.s .bad
 .good:  moveq #0,d0
         bra.s .done
@@ -482,11 +528,11 @@ object_fits:
 object_draw:
         movem.l d0-d7/a0-a3,-(sp)
         tst.b obj_drag(a4)
-        bne.s .outline
+        bne .outline
         tst.w obj_hover(a4)
-        bpl.s .outline
-        cmpi.w #160,($9dac).l
-        bhs.s .outline
+        bpl .outline
+        cmpi.w #160,(MOUSE_Y).l
+        bhs .outline
         move.w obj_type(a4),d0
         bsr object_desc
         move.w brush_x(a4),d0           ; where object_place puts it
@@ -501,19 +547,27 @@ object_draw:
         move.w obj_type(a4),d2
         moveq #-1,d3
         bsr object_snap
-        sub.w ($9da8).l,d0              ; into the back buffer
+        sub.w (VIEW_SCROLL).l,d0              ; into the back buffer
         move.w 6(a0),d2
         move.w 8(a0),d3
-        move.w 2(a0),d6                 ; its first frame, as the game shows it
+        bsr object_frame                ; the frame of its animation
         mulu $a(a0),d6
         movea.l $1a(a0),a1
         adda.l d6,a1
+        adda.l #OBJECT_BASE,a1
         movea.l a1,a2
         adda.w $c(a0),a2                ; mask
         move.w obj_flags(a4),d5
         moveq #4,d4
-        movea.l $cc(a5),a0
-        jsr $704c
+        movea.l G_VIEW_BACK(a5),a0
+        ifd BLIT_HEIGHT
+        move.w (BLIT_HEIGHT).l,-(sp)
+        move.w #160,(BLIT_HEIGHT).l     ; nothing below the view's rows
+        jsr BLIT
+        move.w (sp)+,(BLIT_HEIGHT).l
+        else
+        jsr BLIT
+        endif
         tst.b 2(a6)
 .blit:  btst #6,2(a6)
         bne.s .blit
@@ -522,7 +576,7 @@ object_draw:
         moveq #31,d7
 .slot:  move.w (a1),d2
         beq.s .next
-        sub.w ($9da8).l,d2
+        sub.w (VIEW_SCROLL).l,d2
         move.w 2(a1),d3
         move.w 4(a1),d0
         bsr object_desc
@@ -544,6 +598,7 @@ object_status:
         moveq #0,d1
         moveq #20,d2
         bsr status_number
+        ifd TWO_PLAYER
         moveq #1,d1                     ; valid for two players
         movem.l d2,-(sp)
         add.w #12,d2
@@ -556,6 +611,7 @@ object_status:
 .players:
         bsr.s .text
         movem.l (sp)+,d2
+        endif
         moveq #2,d1
         move.w obj_hover(a4),d0
         bmi.s .none

@@ -119,6 +119,14 @@ entries with no bound, testing only the type word, so empty slots count too
 and a level has at most four such slots. The game
 draws an object frame with `$704C`, using the record's flags.
 
+A descriptor gives the frame shown at the level's start (`+$02`), the
+number of frames (`+$04`), width and height (`+$06`, `+$08`), the frame size
+(`+$0A`), the mask's offset from a frame (`+$0C`) and the address of the
+first frame (`+$1A`). In play the game advances the object instances once
+per game step (`$235C`). The editor's preview at the cursor draws the
+selected type's frames in turn with the same routine, one per game step,
+starting at the frame of the level's start; the instances are not touched.
+
 ## Attribute grid
 
 `$58800`, 408x42 cells of 4x4 pixels. `$24FE` clears it and writes the steel

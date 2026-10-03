@@ -1,4 +1,4 @@
-; Lemmings In-Game Level Editor V2.2
+; Lemmings In-Game Level Editor V2.3
 ; Copyright (c) 2026 Timo Heimonen <timo.heimonen@proton.me>
 ; Licensed under the MIT License. See the LICENSE file for details.
 ;
@@ -42,8 +42,10 @@ custom_key:
         beq.s .menu
         cmp.b #$24,d0                   ; G: snap
         beq.s .snap
+        ifd TWO_PLAYER
         cmp.b #$37,d0                   ; M: the two-player marker
         beq.s .marker
+        endif
         cmp.b #$16,d0                   ; U: undo, with shift redo
         beq.s .undo
         moveq #-1,d1
@@ -61,10 +63,12 @@ custom_key:
 .snap:  st pending_snap(a4)
         moveq #1,d1                     ; NZ
         rts
+        ifd TWO_PLAYER
 .marker:
         st pending_marker(a4)
         moveq #1,d1
         rts
+        endif
 .undo:  moveq #1,d1
         tst.b shift(a4)
         beq.s .undo_set
@@ -87,6 +91,7 @@ mode_switch:
         bne.s .set
         moveq #0,d0
 .set:   move.b d0,edit_mode(a4)
+        move.w #-1,obj_frame(a4)        ; the preview starts from its start frame
         clr.b steel_drag(a4)
         tst.b obj_drag(a4)
         beq.s .drawn
@@ -106,8 +111,7 @@ input_reset:
         clr.b obj_drag(a4)
         bsr level_apply
 .pending:
-        move.w sr,-(sp)
-        ori.w #$0700,sr
+        INTS_OFF
         clr.w pending_toggle(a4)        ; and pending_cycle
         clr.b pending_flip(a4)
         clr.b pending_select(a4)
@@ -118,7 +122,7 @@ input_reset:
         clr.b pending_behind(a4)
         clr.b pending_marker(a4)
         clr.b pending_undo(a4)
-        move.w (sp)+,sr
+        INTS_ON
         rts
 
 ; From the frame hook in the objects and parameters modes. D0: left and right
@@ -199,7 +203,7 @@ param_change:
 .apply: bsr level_apply
         cmpi.b #PARAMS-1,param_sel(a4)
         bne.s .restore
-        move.w $18(a1),($9da8).l
+        move.w $18(a1),(VIEW_SCROLL).l
 .restore:
         movem.l (sp)+,d0-d3/a0-a1
 .done:  rts
@@ -238,9 +242,9 @@ param_table:
 ; Make the game follow custom_record after a change of its parameters,
 ; objects, steel areas or title, as a level start sets it up: the record's
 ; header, objects, steel areas and title are copied to the game's record at
-; $C5A6, the simulation is set up again ($2826: object instances, entrances,
-; parameters and skill counters) and the attribute grid is rebuilt ($24FE
-; steel, $2476 trigger areas, with the game's A4). No lemming has been
+; LEVEL_RECORD, the simulation is set up again (INIT_SIMULATION: object
+; instances, entrances, parameters and skill counters) and the attribute grid
+; is rebuilt (STEEL_GRID, OBJECT_GRID, with the game's A4). No lemming has been
 ; released, so nothing else refers to the old state. The pause flag, the
 ; startup counter and the view's scroll stay; the skill selection sprite stays
 ; hidden.
@@ -248,26 +252,26 @@ level_apply:
         bsr undo_check                  ; an edit that changed nothing
         movem.l d0-d7/a0-a6,-(sp)
         lea custom_record(pc),a0
-        lea ($c5a6).l,a1
+        lea (LEVEL_RECORD).l,a1
         move.w #$120/4-1,d0
 .head:  move.l (a0)+,(a1)+
         dbra d0,.head
         lea custom_record+$760(pc),a0
-        lea ($cd06).l,a1
+        lea (LEVEL_RECORD+$760).l,a1
         moveq #$a0/4-1,d0
 .tail:  move.l (a0)+,(a1)+
         dbra d0,.tail
-        move.b $39(a5),-(sp)
-        move.l $dc(a5),-(sp)
-        move.w ($9da8).l,-(sp)
+        move.b G_PAUSE(a5),-(sp)
+        move.l G_STARTUP(a5),-(sp)
+        move.w (VIEW_SCROLL).l,-(sp)
         lea (GAME_ROWS).l,a4
-        jsr $2826
-        move.w (sp)+,($9da8).l
-        move.l (sp)+,$dc(a5)
-        move.b (sp)+,$39(a5)
-        clr.l ($144f2).l
-        jsr $24fe
-        jsr $2476
+        jsr INIT_SIMULATION
+        move.w (sp)+,(VIEW_SCROLL).l
+        move.l (sp)+,G_STARTUP(a5)
+        move.b (sp)+,G_PAUSE(a5)
+        clr.l (SKILL_SPRITE).l
+        jsr STEEL_GRID
+        jsr OBJECT_GRID
         movem.l (sp)+,d0-d7/a0-a6
         st dirty(a4)
         or.b #1,status_dirty(a4)
@@ -296,17 +300,20 @@ custom_toggle:
 ; hook puts custom_record in, and its normal start path.
 restart_level:
         bsr hide_status
-        st $2b(a5)
+        st G_SHUTDOWN(a5)
         move.w #$0010,$9a(a6)
         move.w #$8020,$9a(a6)
-        clr.b $2f(a5)
-        jsr $1ae0
+        clr.b G_PLAYING(a5)
+        jsr PLAY_STOP
         moveq #-1,d0
-        jsr $17268
-        move.w #-1,$76(a5)
-        jsr $2632
+        jsr SOUND_CONTROL
+        ifd G_MUSIC
+        clr.b G_MUSIC(a5)               ; the tune has stopped
+        endif
+        move.w #-1,G_BANK(a5)
+        jsr LOAD_LEVEL
         movem.l (sp)+,d0-d7/a0-a6
-        jmp $56a
+        jmp ENTER_LEVEL
 
 ; ---------------------------------------------------------------------------
 ; Leaving the editor
@@ -318,14 +325,14 @@ custom_escape:
         beq.s custom_leave
         bra menu_ask_leave
 
-; Close the editor and end the level with the game's own Esc action ($1598).
+; Close the editor and end the level with the game's own Esc action (ESC_ACTION).
 ; The game fades the level out; its result screen hook (custom_ended, levels.s)
 ; then returns to the list.
 custom_leave:
         bsr hide_status
         clr.b active(a4)
         st leaving(a4)
-        jmp $1598
+        jmp ESC_ACTION
 
 ; Z clear when the edited level differs from the one loaded or last saved:
 ; custom_record with the placements after its terrain pieces, as a save would
@@ -419,7 +426,7 @@ custom_status:
         moveq #2,d1
         moveq #0,d2
         bsr status_number
-        move.w ($c5c0).l,d0
+        move.w (LEVEL_RECORD+$1a).l,d0
         addq.w #1,d0
         moveq #3,d1
         bsr status_number
@@ -444,7 +451,7 @@ custom_status:
         moveq #1,d1
         moveq #20,d2
         bsr status_number
-        move.w ($c5c2).l,d0
+        move.w (LEVEL_RECORD+$1c).l,d0
         moveq #3,d1
         bsr status_number
         bra .footer
@@ -533,7 +540,7 @@ status_texts:
         rts
 
 status_footer:
-        dc.b 5,50,'Editor V2.2 by Timo Heimonen',0,$ff
+        dc.b 5,50,'Editor V2.3 by Timo Heimonen',0,$ff
 status_modes:
         dc.w status_terrain-status_modes,status_steel-status_modes
         dc.w status_objects-status_modes,status_none-status_modes
@@ -566,8 +573,14 @@ status_steel:
         dc.b 0,20,'Steel Areas',0,0,60,'LMB Drag: Add',0,1,60,'RMB: Remove',0
         dc.b 3,60,'T: Terrain',0,$ff
 status_objects:
+        ifd TWO_PLAYER
         dc.b 0,20,'Object',0,1,20,'2 Players',0,2,20,'Object Slot',0
         dc.b 3,20,'Objects',0,3,40,'Draw',0,0,60,'LMB: Place/Move',0
         dc.b 1,60,'RMB: Delete  M: 2P',0,2,60,'Left/Right: Object',0
+        else
+        dc.b 0,20,'Object',0,2,20,'Object Slot',0
+        dc.b 3,20,'Objects',0,3,40,'Draw',0,0,60,'LMB: Place/Move',0
+        dc.b 1,60,'RMB: Delete',0,2,60,'Left/Right: Object',0
+        endif
         dc.b 3,60,'F: Draw  O: Terrain',0,5,0,'G: Snap',0,$ff
         even
