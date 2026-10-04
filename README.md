@@ -77,7 +77,9 @@ python3 savedisk.py create out/Lemmings_LevelDisk.adf
 rebuilds the index (`python3 savedisk.py --help`). Keep `styles.json` next to
 it. A level disk holds 318 levels. Levels are exchanged as `.lvl` files: a
 `.lvl` file is exactly the game's 2048-byte level record and contains no
-original level data. Details: [level disk](docs/level-disk.md).
+original level data. Its format is specified completely in
+[Amiga Lemmings level file format](docs/Lemmings-lvl-format.md); the level
+disk is described in [level disk](docs/level-disk.md).
 
 ## WHDLoad
 
@@ -289,7 +291,8 @@ of `patch.py`, so end users need only Python.
 
 Addresses, hooks and data formats are documented in [docs/](docs/):
 [patch points](docs/patch-points.md), [memory map](docs/memory-map.md),
-[game internals](docs/game-internals.md), [level disk](docs/level-disk.md) and
+[game internals](docs/game-internals.md), [level disk](docs/level-disk.md),
+[level file format](docs/Lemmings-lvl-format.md) and
 [Holiday Lemmings 1994](docs/holiday-lemmings-1994.md).
 The WHDLoad version is documented in [whdload/docs/](whdload/docs/).
 
