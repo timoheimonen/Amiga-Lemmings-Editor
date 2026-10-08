@@ -1,4 +1,4 @@
-; Lemmings In-Game Level Editor V2.3
+; Lemmings In-Game Level Editor V2.3.1
 ; Copyright (c) 2026 Timo Heimonen <timo.heimonen@proton.me>
 ; Licensed under the MIT License. See the LICENSE file for details.
 ;
@@ -22,7 +22,7 @@ list_delete:
         tst.l d0
         bne list_failed
         bsr list_delete_ask
-        bsr list_buttons
+        bsr latch_buttons
 .wait:  jsr WAIT_FRAME
         bsr menu_next_key
         tst.w d0
@@ -32,18 +32,13 @@ list_delete:
         bsr menu_is_return
         beq.s .delete
         bra.s .wait
-.mouse: btst #2,$16(a6)
-        seq d0
-        cmp.b last_right(a4),d0
-        beq.s .left
-        move.b d0,last_right(a4)
-        tst.b d0
-        bne.s .keep
-.left:  btst #6,$bfe001                 ; a click does nothing, here or later
+.mouse: bsr right_edge
+        bmi.s .keep
+        btst #6,$bfe001                 ; a click does nothing, here or later
         seq last_left(a4)
         bra.s .wait
 .keep:  bsr list_show
-        bsr list_buttons
+        bsr latch_buttons
         bra list_loop
 .delete:
         lea txt_list_deleting(pc),a0
@@ -84,12 +79,7 @@ list_delete_read:
         bsr list_read_level
         moveq #0,d0
         else
-        moveq #0,d0
-        move.b list_drive(a4),d0
-        move.w d5,d1
-        lsr.w #1,d1
-        addq.w #1,d1
-        bsr disk_read_track
+        bsr read_slot_track
         tst.l d0
         bne.s .error
         move.w d5,d0
@@ -112,11 +102,8 @@ list_delete_read:
 ; Show the question for the selected level, as list_delete_read read it.
 list_delete_ask:
         movem.l d0-d7/a0-a3,-(sp)
-        bsr list_screen
-        bsr list_default_palettes
-        lea list_text(pc),a1
         lea txt_list_head(pc),a0
-        bsr list_append
+        bsr list_text_begin
         lea txt_delete_ask(pc),a0
         bsr list_append
         move.b #2,(a1)+                 ; the level's row as the list shows it
@@ -143,9 +130,7 @@ list_delete_ask:
         clr.b (a1)+
 .ended:
         endif
-        move.b #$ff,(a1)
-        lea list_text(pc),a0
-        jsr DRAW_TEXT
+        bsr list_text_draw
         lea list_palette_rows(a4),a0
         move.w #PAL_HEAD,4*2(a0)
         move.w #PAL_HEAD,9*2(a0)
@@ -186,34 +171,14 @@ disk_delete_level:
         movem.l d1-d7/a0-a6,-(sp)
         lea state(pc),a4
         move.l d1,d7
-        bsr disk_acquire
-        tst.l d0
-        bne .done
-        bsr disk_select
-        tst.l d0
-        bne .release
-        lea install(pc),a1
-        adda.l #DISK_HEADER,a1
-        moveq #0,d0
-        bsr disk_read_decoded
-        tst.l d0
-        bne .release
-        movea.l a1,a0
-        bsr validate_level_header
-        tst.l d0
-        bne .release
+        bsr level_disk_open
+        bne.s .done
         cmp.l #LEVEL_SLOTS,d7
         bhs.s .refuse
-        move.w d7,d0
-        add.w d0,d0
-        tst.b 64(a1,d0.w)               ; a level by the index
+        bsr index_entry
+        tst.b (a0)                      ; a level by the index
         beq.s .changed
-        lea install(pc),a1
-        adda.l #DISK_TRACK,a1
-        move.l d7,d0
-        lsr.w #1,d0
-        addq.w #1,d0
-        bsr disk_read_decoded
+        bsr level_disk_track
         tst.l d0
         bne.s .release
         move.l d7,d0

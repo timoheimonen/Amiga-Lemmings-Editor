@@ -1,4 +1,4 @@
-; Lemmings In-Game Level Editor V2.3
+; Lemmings In-Game Level Editor V2.3.1
 ; Copyright (c) 2026 Timo Heimonen <timo.heimonen@proton.me>
 ; Licensed under the MIT License. See the LICENSE file for details.
 ;
@@ -15,8 +15,6 @@
 ; A4 is the editor state, A5 the game globals and A6 the custom chip base.
 
 STEEL_CODE      equ 9
-GRID_WIDTH      equ 408
-VIEW_ROW        equ 44                  ; the level view, 320 x 160 from x 16
 
 ; From the frame hook in steel mode: the mouse buttons. The cursor's world
 ; position is in brush_x/brush_y.
@@ -26,26 +24,17 @@ steel_input:
         asr.w #2,d2                     ; cell column
         move.w brush_y(a4),d3
         asr.w #2,d3                     ; grid row
-        btst #2,$16(a6)
-        seq d0
-        cmp.b last_right(a4),d0
-        beq.s .left
-        move.b d0,last_right(a4)
-        tst.b d0
-        beq.s .left
+        bsr right_edge
+        bpl.s .left
         move.w d2,d0
         move.w d3,d1
         bsr steel_remove
         st dirty(a4)
-.left:  btst #6,$bfe001
-        seq d0
-        cmp.b last_left(a4),d0
+.left:  bsr left_edge
         beq.s .done
-        move.b d0,last_left(a4)
-        st dirty(a4)
-        tst.b d0
-        beq.s .release
-        cmpi.w #160,(MOUSE_Y).l
+        st dirty(a4)                    ; keeps the condition codes
+        bpl.s .release
+        cmpi.w #VIEW_ROWS,(MOUSE_Y).l
         bhs.s .done                     ; not over the panel
         move.w d2,drag_col(a4)
         move.w d3,drag_row(a4)
@@ -227,7 +216,7 @@ steel_draw:
         bsr.s steel_cells
         bra.s .done
 .cursor:
-        cmpi.w #160,(MOUSE_Y).l
+        cmpi.w #VIEW_ROWS,(MOUSE_Y).l
         bhs.s .done
         move.w d2,d4
         move.w d3,d5
@@ -256,53 +245,109 @@ steel_cells:
         rts
 
 ; D2/D3: left and top, D4/D5: right and bottom view pixel. Invert the border
-; of the box in the view's back buffer, where it is visible.
+; of the box in the view's back buffer where it is visible (x VIEW_LEFT..
+; VIEW_LEFT+VIEW_WIDTH-1, y 0..VIEW_ROWS-1).
 outline_box:
-        movem.l d0-d7,-(sp)
-        move.w d2,d0
-.top:   move.w d3,d1
-        bsr.s steel_plot
-        move.w d5,d1
-        bsr.s steel_plot
-        addq.w #1,d0
-        cmp.w d4,d0
-        ble.s .top
+        movem.l d0-d7/a0,-(sp)
         move.w d3,d1
-        addq.w #1,d1
-.side:  cmp.w d5,d1
-        bge.s .done
+        bsr.s outline_row               ; top
+        move.w d5,d1
+        bsr.s outline_row               ; bottom
         move.w d2,d0
-        bsr.s steel_plot
+        bsr outline_column              ; left
         move.w d4,d0
-        bsr.s steel_plot
-        addq.w #1,d1
-        bra.s .side
-.done:  movem.l (sp)+,d0-d7
+        bsr outline_column              ; right, between the rows
+        movem.l (sp)+,d0-d7/a0
         rts
 
-; D0/D1: view pixel. Invert it in all four planes when it is visible.
-steel_plot:
-        cmp.w #16,d0
-        blt.s .out
-        cmp.w #335,d0
-        bgt.s .out
+; D1: view row, D2/D4: first and last pixel. Invert them where visible.
+; Clobbers D0/D1/D6/D7/A0.
+outline_row:
         tst.w d1
-        bmi.s .out
-        cmp.w #159,d1
-        bgt.s .out
-        movem.l d0-d2/a0,-(sp)
+        bmi.s .done
+        cmp.w #VIEW_ROWS-1,d1
+        bgt.s .done
+        move.w d2,d6
+        cmp.w #VIEW_LEFT,d6
+        bge.s .left
+        moveq #VIEW_LEFT,d6
+.left:  move.w d4,d7
+        cmp.w #VIEW_LEFT+VIEW_WIDTH-1,d7
+        ble.s .right
+        move.w #VIEW_LEFT+VIEW_WIDTH-1,d7
+.right: cmp.w d6,d7
+        bge.s .visible
+.done:  rts
+.visible:
         movea.l G_VIEW_BACK(a5),a0
-        move.w d1,d2
-        mulu #VIEW_ROW,d2
-        adda.l d2,a0
-        move.w d0,d2
-        lsr.w #3,d2
-        adda.w d2,a0
+        mulu #VIEW_ROW,d1
+        adda.l d1,a0
+        move.w d6,d0
+        lsr.w #3,d0
+        adda.w d0,a0                    ; the first byte
+        move.w d7,d1
+        lsr.w #3,d1
+        sub.w d0,d1                     ; D1: the bytes after it
+        moveq #7,d0
+        and.w d6,d0
+        moveq #-1,d6
+        lsr.b d0,d6                     ; D6: the first byte's pixels
+        not.w d7
+        and.w #7,d7
+        moveq #-1,d0
+        lsl.b d7,d0                     ; D0: the last byte's pixels
+        tst.w d1
+        bne.s .first
+        and.b d0,d6                     ; one byte holds them all
+        bra.s outline_byte
+.first: bsr.s outline_byte
+        moveq #-1,d6                    ; the bytes between: all pixels
+        bra.s .next
+.byte:  bsr.s outline_byte
+.next:  addq.l #1,a0
+        subq.w #1,d1
+        bne.s .byte
+        move.b d0,d6
+
+; A0: a byte of the view's back buffer, D6: pixels. Invert them in its four
+; planes.
+outline_byte:
+        eor.b d6,(a0)
+        eor.b d6,VIEW_PLANE(a0)
+        eor.b d6,2*VIEW_PLANE(a0)
+        eor.b d6,3*VIEW_PLANE(a0)
+        rts
+
+; D0: view column, D3/D5: top and bottom row. Invert the pixels of the column
+; between the rows where visible. Clobbers D0/D1/D6/D7/A0.
+outline_column:
+        cmp.w #VIEW_LEFT,d0
+        blt.s .done
+        cmp.w #VIEW_LEFT+VIEW_WIDTH-1,d0
+        bgt.s .done
+        move.w d3,d6
+        addq.w #1,d6                    ; the first row
+        bpl.s .top
+        moveq #0,d6
+.top:   move.w d5,d7
+        subq.w #1,d7                    ; the last row
+        cmp.w #VIEW_ROWS-1,d7
+        ble.s .bottom
+        move.w #VIEW_ROWS-1,d7
+.bottom:
+        sub.w d6,d7
+        bmi.s .done
+        movea.l G_VIEW_BACK(a5),a0
+        mulu #VIEW_ROW,d6
+        adda.l d6,a0
+        move.w d0,d1
+        lsr.w #3,d1
+        adda.w d1,a0
         not.w d0
         and.w #7,d0                     ; bit 7 - (x & 7)
-        bchg d0,(a0)
-        bchg d0,VIEW_PLANE(a0)
-        bchg d0,2*VIEW_PLANE(a0)
-        bchg d0,3*VIEW_PLANE(a0)
-        movem.l (sp)+,d0-d2/a0
-.out:   rts
+        moveq #0,d6
+        bset d0,d6
+.row:   bsr.s outline_byte
+        lea VIEW_ROW(a0),a0
+        dbra d7,.row
+.done:  rts

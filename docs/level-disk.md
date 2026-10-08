@@ -1,7 +1,7 @@
 # Level disk
 
 A custom level is exactly the 2048-byte level record of the Amiga game
-([level record](game-internals.md#level-record)), with no header of its own:
+([level file format](Lemmings-lvl-format.md)), with no header of its own:
 a `.lvl` file is that record. The floppy version keeps up to 318 of them on a
 level disk, never on the game disks. The editor reads and writes it with its
 own disk code; `savedisk.py` works with the same format in `.adf` images. The

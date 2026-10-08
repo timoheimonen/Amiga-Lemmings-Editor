@@ -1,4 +1,4 @@
-; Lemmings In-Game Level Editor V2.3
+; Lemmings In-Game Level Editor V2.3.1
 ; Copyright (c) 2026 Timo Heimonen <timo.heimonen@proton.me>
 ; Licensed under the MIT License. See the LICENSE file for details.
 ;
@@ -282,10 +282,9 @@ level_find_disk:
         cmp.w #4,d7
         blo.s .drive
         st native_used(a4)              ; disk 2 may be taken out for it
-        move.b #M_PROMPT_LEVEL,menu_mode(a4)
         lea txt_insert_level(pc),a0
-        move.l a0,menu_msg(a4)
-        bra menu_draw_message
+        moveq #M_PROMPT_LEVEL,d1
+        bra menu_prompt
 .found: bsr menu_show_working
         move.l d7,d0
         move.w custom_slot(a4),d1
@@ -299,23 +298,16 @@ level_find_disk:
         bra level_saved
 
 ; D7: drive just read, D0: the result, with its track 0 in DISK_TRACK. When
-; it is the drive the game reads disk 2 from and disk 2 is not there (its
-; directory starts with Ground1), disk 2 must come back before the menu
-; closes. Preserves every register.
+; it is the drive the game reads disk 2 from and disk 2 is not there,
+; disk 2 must come back before the menu closes. Preserves every register.
 native_check:
         cmp.b native_drive(a4),d7
         bne.s .done
-        move.l a0,-(sp)
         tst.l d0
         bne.s .other
-        lea install(pc),a0
-        adda.l #DISK_TRACK+$410,a0
-        cmpi.l #'Grou',(a0)
-        bne.s .other
-        cmpi.l #'nd1'<<8,4(a0)
-        beq.s .disk2
+        bsr is_disk2
+        beq.s .done
 .other: st native_used(a4)
-.disk2: movea.l (sp)+,a0
 .done:  rts
 
 ; The level disk prompt: Return looks again, Esc leaves.
@@ -335,33 +327,16 @@ disk_store_level:
         lea state(pc),a4
         move.l d1,d7
         move.l d1,d6                    ; negative: a new level
-        bsr disk_acquire
-        tst.l d0
+        bsr level_disk_open
         bne .done
-        bsr disk_select
-        tst.l d0
-        bne .release
-        lea install(pc),a1
-        adda.l #DISK_HEADER,a1
-        moveq #0,d0
-        bsr disk_read_decoded
-        tst.l d0
-        bne .release
-        movea.l a1,a0
-        bsr validate_level_header
-        tst.l d0
-        bne .release
         tst.l d7
         bpl.s .slot
         ; The lowest free slot by the index.
         moveq #0,d7
 .free:  cmp.w #LEVEL_SLOTS,d7
         bhs.s .full
-        lea install(pc),a2
-        adda.l #DISK_HEADER+64,a2
-        move.w d7,d0
-        add.w d0,d0
-        tst.b (a2,d0.w)
+        bsr index_entry
+        tst.b (a0)
         beq.s .slot
 .taken: addq.w #1,d7
         bra.s .free
@@ -369,24 +344,15 @@ disk_store_level:
         bra .release
 .slot:  cmp.l #LEVEL_SLOTS,d7
         bhs .refuse
-        lea install(pc),a1
-        adda.l #DISK_TRACK,a1
-        move.l d7,d0
-        lsr.w #1,d0
-        addq.w #1,d0
-        bsr disk_read_decoded
+        bsr level_disk_track
         tst.l d0
         bne .release
         move.l d7,d0
-        and.w #1,d0
-        mulu #LEVEL_SLOT_SIZE,d0
-        lea 0(a1,d0.w),a2
+        bsr slot_in_track
+        movea.l a0,a2
         ; A slot the index calls free must be empty on the disk.
-        lea install(pc),a0
-        adda.l #DISK_HEADER+64,a0
-        move.w d7,d0
-        add.w d0,d0
-        tst.b (a0,d0.w)
+        bsr index_entry
+        tst.b (a0)
         bne.s .occupied
         movea.l a2,a0
         move.w #LEVEL_SLOT_SIZE/4-1,d0
@@ -433,6 +399,50 @@ disk_store_level:
         bsr disk_release
 .done:  move.l d7,d1
         movem.l (sp)+,d2-d7/a0-a6
+        rts
+
+; D0: drive. Take it for a slot transaction (disk_acquire, disk_select) and
+; read the level disk's track 0 into DISK_HEADER, which A1 returns. Return
+; D0 = 0 (Z set) for a valid level disk, otherwise the error, after the drive
+; has been released if it was taken.
+level_disk_open:
+        bsr disk_acquire
+        tst.l d0
+        bne.s .done
+        bsr disk_select
+        tst.l d0
+        bne.s .release
+        lea install(pc),a1
+        adda.l #DISK_HEADER,a1
+        moveq #0,d0
+        bsr disk_read_decoded
+        tst.l d0
+        bne.s .release
+        movea.l a1,a0
+        bsr validate_level_header
+        tst.l d0
+        beq.s .done
+.release:
+        bsr disk_release
+.done:  tst.l d0
+        rts
+
+; D7: slot. Read the track that holds it into DISK_TRACK, which A1 returns;
+; D0 returns the result of disk_read_decoded.
+level_disk_track:
+        lea install(pc),a1
+        adda.l #DISK_TRACK,a1
+        move.l d7,d0
+        lsr.w #1,d0
+        addq.w #1,d0
+        bra disk_read_decoded
+
+; D7: slot. A0 returns its entry in the index read into DISK_HEADER.
+index_entry:
+        lea install(pc),a0
+        adda.l #DISK_HEADER+64,a0
+        adda.w d7,a0
+        adda.w d7,a0
         rts
 
 ; The second half of a slot transaction, after the caller's checks. D7:

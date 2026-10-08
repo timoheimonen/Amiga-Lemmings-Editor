@@ -1,4 +1,4 @@
-; Lemmings In-Game Level Editor V2.3
+; Lemmings In-Game Level Editor V2.3.1
 ; Copyright (c) 2026 Timo Heimonen <timo.heimonen@proton.me>
 ; Licensed under the MIT License. See the LICENSE file for details.
 ;
@@ -237,7 +237,7 @@ param_table:
         dc.b $16,1
         dc.w 0,99                       ; diggers
         dc.b $18,16
-        dc.w 0,1280                     ; start position, the view's fast step
+        dc.w 0,SCROLL_MAX               ; start position, the view's fast step
 
 ; Make the game follow custom_record after a change of its parameters,
 ; objects, steel areas or title, as a level start sets it up: the record's
@@ -530,17 +530,13 @@ status_texts:
         moveq #0,d2
         move.b (a2)+,d2
         bsr.s status_cell
-.char:  moveq #0,d0
-        move.b (a2)+,d0
-        beq.s .entry
-        bsr glyph
-        addq.w #8,d4
-        bra.s .char
+        bsr glyph_text
+        bra.s .entry
 .done:  movem.l (sp)+,d0-d2/d4/a3
         rts
 
 status_footer:
-        dc.b 5,50,'Editor V2.3 by Timo Heimonen',0,$ff
+        dc.b 5,50,'Editor V2.3.1 by Timo Heimonen',0,$ff
 status_modes:
         dc.w status_terrain-status_modes,status_steel-status_modes
         dc.w status_objects-status_modes,status_none-status_modes
