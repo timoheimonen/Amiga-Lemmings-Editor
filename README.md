@@ -1,8 +1,8 @@
 # Integrated Level Editor for Amiga Lemmings and Holiday Lemmings 1994
 
 A patch that adds custom levels to Amiga Lemmings (1991): an in-game level
-editor that runs natively on the Amiga, inside the original game and its
-engine. No External tools are needed to make a level.
+editor. No External tools are needed to make a level.  
+The editor integrates directly into the game engine, ensuring 100% authentic gameplay and physics.
 
 On the title screen, CUSTOM follows FUN, TRICKY, TAXING and MAYHEM, with a
 list of your own levels, for one or two players, and New Level to create
