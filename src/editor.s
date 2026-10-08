@@ -1,4 +1,4 @@
-; Lemmings In-Game Level Editor V2.3
+; Lemmings In-Game Level Editor V2.3.1
 ; Copyright (c) 2026 Timo Heimonen <timo.heimonen@proton.me>
 ; Licensed under the MIT License. See the LICENSE file for details.
 ;
@@ -51,6 +51,24 @@ CHIP_COPPER     equ $22c00
 TEXT_BYTES      equ 3840
 TRACK_BYTES     equ 11*512
 MAX_PLACEMENTS  equ 399               ; terrain pieces of a level: the list needs an end marker
+; The level's terrain (TERRAIN, four planes) and the view of it (G_VIEW_BACK,
+; four planes), in pixels and bytes.
+TERRAIN_ROW     equ 204               ; bytes per row: 1632 pixels
+TERRAIN_ROWS    equ 168
+VIEW_ROW        equ 44                ; bytes per row: 352 pixels, of which
+VIEW_LEFT       equ 16                ; x 16..335 are visible
+VIEW_WIDTH      equ 320
+VIEW_ROWS       equ 160               ; the level view; the skill panel below it
+SCROLL_MAX      equ 1280              ; the view's largest scroll
+GRID_WIDTH      equ 408               ; columns of the attribute grid (GRID_ROWS)
+; A graphics style's data (G_STYLE, leveldata): its object descriptors, then
+; its terrain piece descriptors (width, height, image, mask).
+OBJECT_DESC     equ $70
+OBJECT_SIZE     equ $22
+OBJECT_TYPES    equ 16                ; at most, up to the first empty descriptor
+PIECE_DESC      equ $290
+PIECE_SIZE      equ 12
+PIECE_TYPES     equ 64
 DELETED_MAX     equ 32                ; FILES: names deleted in this session (level_delete.s)
 
 ; Editor state, relative to "state".
@@ -60,8 +78,6 @@ mask_ptr        rs.l 1              ; and mask
 gfx_ptr         rs.l 1              ; the level's Ground graphics in the block
 plane_size      rs.l 1
 paint_count     rs.l 1              ; pieces placed since the level started
-dplane          rs.l 1              ; destination plane stride
-dest_ptr        rs.l 1              ; destination surface base
 disk_raw        rs.l 1              ; raw MFM buffer of a transfer
 menu_msg        rs.l 1              ; message shown by the menu
 saved_crc       rs.l 1              ; CRC-32 of custom_record as loaded or last saved
@@ -73,12 +89,11 @@ brush_y         rs.w 1
 width           rs.w 1              ; selected piece
 height          rs.w 1
 stride          rs.w 1
-mode            rs.w 1              ; compositor target
-origin_x        rs.w 1
-origin_y        rs.w 1
-origin_q        rs.w 1              ; destination byte column of the piece's left edge
-source_y        rs.w 1
-row_stride      rs.w 1
+col_start       rs.w 1              ; compositor: the piece's first byte column - clip_lo
+clip_inner      rs.w 1              ; columns whose two bytes are inside the clip window
+row_skip        rs.w 1              ; from the end of a destination row to the next
+src_skip        rs.w 1              ; and of a source row: 0, or back for a flipped piece
+rows_left       rs.w 1
 clip_top        rs.w 1              ; first writable destination row
 undo_brush      rs.w 3              ; the brush kept while undo redraws pieces
 clip_rows       rs.w 1              ; number of writable rows
@@ -207,12 +222,9 @@ STATE_SIZE      rs.b 0
         else
         org 0
         endif
-; Install the hooks: keyboard interrupt (HOOK_KEYBOARD), frame start
-; (HOOK_FRAME), gameplay input (HOOK_ACTIONS), level setup (HOOK_CAPTURE), end
-; of frame drawing (HOOK_OVERLAY), the title screen and the custom levels'
-; hooks (title.s); in a relocated editor (RELOCATED) patch.py has written the
-; hooks into the game's program. Also prepares the font and the copper list
-; continuation for the status block.
+; Install the hooks listed in "hooks"; in a relocated editor (RELOCATED)
+; patch.py has written them into the game's program. Also prepares the font
+; and the copper list continuation for the status block.
 install:
         movem.l d0-d7/a0-a6,-(sp)
         lea state(pc),a4
@@ -227,36 +239,30 @@ install:
         endif
         adda.l #GFX,a0
         move.l a0,gfx_ptr(a4)
-        ifd RELOCATED
-        bsr prepare_font                ; patch.py has written the hooks
-        else
-        lea keyboard(pc),a0
-        move.w sr,-(sp)
-        ori.w #$0700,sr                 ; the keyboard interrupt must never
-        move.l a0,HOOK_KEYBOARD+2                 ; run a half-written jump
-        move.w #$4ef9,HOOK_KEYBOARD
-        move.l #$4e714e71,HOOK_KEYBOARD+6
-        move.w #$4e71,HOOK_KEYBOARD+10
-        move.w (sp)+,sr
-        bsr prepare_font
-        lea frame(pc),a0
-        move.l a0,HOOK_FRAME+2
-        move.w #$4ef9,HOOK_FRAME
-        move.w #$4e71,HOOK_FRAME+6
-        lea actions(pc),a0
-        move.l a0,HOOK_ACTIONS+2
-        move.w #$4ef9,HOOK_ACTIONS
-        move.w #$4e71,HOOK_ACTIONS+6
-        lea capture(pc),a0
-        move.l a0,HOOK_CAPTURE+2
-        move.w #$4ef9,HOOK_CAPTURE
-        move.w #$4e71,HOOK_CAPTURE+6
-        lea overlay(pc),a0
-        move.l a0,HOOK_OVERLAY+2
-        move.w #$4ef9,HOOK_OVERLAY
-        move.w #$4e71,HOOK_OVERLAY+6
-        bsr title_install
+        ifnd RELOCATED
+        lea hooks(pc),a2
+        INTS_OFF                        ; the keyboard interrupt must never
+.hook:  move.l (a2)+,d0                 ; run a half-written jump
+        beq.s .hooked
+        movea.l d0,a1
+        lea hooks(pc),a0
+        adda.w (a2)+,a0
+        move.w #$4ef9,d0                ; JMP
+        move.w (a2)+,d1                 ; the bytes replaced
+        bpl.s .jump
+        move.w #$4eb9,d0                ; JSR
+        neg.w d1
+.jump:  move.w d0,(a1)+
+        move.l a0,(a1)+
+        subq.w #6,d1
+.nop:   move.w #$4e71,(a1)+
+        subq.w #2,d1
+        bgt.s .nop
+        bra.s .hook
+.hooked:
+        INTS_ON
         endif
+        bsr prepare_font
         lea copper_template(pc),a0
         lea CHIP_COPPER,a1
         move.w #(copper_end-copper_template)/2-1,d0
@@ -270,6 +276,35 @@ install:
         endif
         movem.l (sp)+,d0-d7/a0-a6
         rts
+
+        ifnd RELOCATED
+; The hooks: the game's address, the editor's routine, and the length of the
+; game's instructions it replaces with a JMP and NOPs, negative for a JSR.
+HOOK            macro
+        dc.l \1
+        dc.w \2-hooks,\3
+        endm
+hooks:  HOOK HOOK_KEYBOARD,keyboard,12  ; keyboard interrupt
+        HOOK HOOK_FRAME,frame,8         ; frame start
+        HOOK HOOK_ACTIONS,actions,8     ; gameplay input
+        HOOK HOOK_CAPTURE,capture,8     ; level setup
+        HOOK HOOK_OVERLAY,overlay,8     ; end of frame drawing
+        HOOK HOOK_INJECT,custom_inject,10 ; playing a custom level (levels.s)
+        HOOK HOOK_BRIEFING,custom_brief,-8 ; returning to HOOK_BRIEFING+6
+        HOOK HOOK_BRIEF_WAIT,briefing_wait,8
+        HOOK HOOK_WON,custom_won,8
+        HOOK HOOK_QUIT,custom_quit,10
+        HOOK HOOK_ENDED,custom_ended,8
+        ifd TWO_PLAYER
+        HOOK HOOK_MATCH,custom_match,8
+        HOOK HOOK_MATCH_END,custom_match_end,8
+        endif
+        HOOK HOOK_SIGN,title_sign,8     ; the title screen (title.s)
+        HOOK HOOK_UP,title_up,8
+        HOOK HOOK_DOWN,title_down,8
+        HOOK HOOK_CLICK,title_click,8
+        dc.l 0
+        endif
 
 ; Level setup hook. Resets the editor. When a custom level is edited, loads
 ; and unpacks the level's Ground graphics into editor memory (the game later
@@ -325,17 +360,7 @@ capture:
         move.l d1,d0
         jsr UNPACK
         movea.l G_STYLE(a5),a0
-        lea $290(a0),a0
-        moveq #0,d0
-.count: tst.w (a0)
-        beq.s .counted
-        tst.w 2(a0)
-        beq.s .counted
-        addq.w #1,d0
-        lea 12(a0),a0
-        cmp.w #64,d0
-        blo.s .count
-.counted:
+        bsr style_pieces
         move.w d0,piece_count(a4)
         sne valid(a4)
 .done:  movem.l (sp)+,d0-d7/a0-a6
@@ -420,6 +445,42 @@ editor_shift:
 .down:  st shift(a4)
 .done:  rts
 
+; Remember the mouse buttons as they are now, so that a press made before
+; this point is not taken as a click.
+latch_buttons:
+        btst #6,$bfe001
+        seq last_left(a4)
+        btst #2,$16(a6)
+        seq last_right(a4)
+        rts
+
+; A change of the left or the right mouse button since it was last looked at
+; (latch_buttons): D0 returns -1 (N set) when it was pressed, 1 when it was
+; released, and 0 (Z set) when it has not changed.
+left_edge:
+        btst #6,$bfe001
+        seq d0
+        cmp.b last_left(a4),d0
+        beq.s button_same
+        move.b d0,last_left(a4)
+        bra.s button_edge
+right_edge:
+        btst #2,$16(a6)
+        seq d0
+        cmp.b last_right(a4),d0
+        beq.s button_same
+        move.b d0,last_right(a4)
+button_edge:
+        beq.s .released
+        moveq #-1,d0
+        rts
+.released:
+        moveq #1,d0
+        rts
+button_same:
+        moveq #0,d0
+        rts
+
 ; Frame start hook. Opens the editor at the first frame of an edited level,
 ; pausing the game, and handles E (test play), Esc, G (snap), B (behind), the menus, the mode keys, piece
 ; cycling, flip, scrolling and the mouse buttons; paints into the level when
@@ -435,10 +496,7 @@ frame:
         beq.s .input
         st active(a4)
         st G_PAUSE(a5)
-        btst #6,$bfe001
-        seq last_left(a4)
-        btst #2,$16(a6)
-        seq last_right(a4)
+        bsr latch_buttons
         clr.l SKILL_SPRITE           ; hide the skill-selection sprite
         bsr show_status
         st disk_redraw(a4)     ; draw the preview even if nothing moves
@@ -454,20 +512,13 @@ frame:
         beq.s .editor_input
         subq.b #1,d0                    ; 1: save, 2: title only
         bsr level_save_open
-        bra.s .menu_idle
+        bra .idle
 .menu:  bsr menu_frame
         tst.b leave_now(a4)
-        beq.s .menu_idle
+        beq .idle
         clr.b leave_now(a4)
         bsr custom_leave
         bra .game
-.menu_idle:
-        movem.l (sp)+,d0-d7/a0-a6
-        clr.w G_FRAMES(a5)
-        ifd FADE_STEP
-        jsr FADE_STEP                   ; the level's fade-in goes on
-        endif
-        jmp FRAME_WAIT
 .editor_input:
         move.b pending_undo(a4),d0      ; U: undo, Shift+U: redo
         beq.s .behind_key
@@ -517,7 +568,7 @@ frame:
         bsr custom_escape               ; opens the leave menu or leaves
         tst.b active(a4)
         beq .game
-        bra .menu_idle
+        bra .idle
 .toggle:
         tst.b d0
         beq.s .cycle
@@ -581,31 +632,21 @@ frame:
 .steel: bsr steel_input
         bra .done
 .pieces:
-        btst #2,$16(a6)
-        seq d0
-        cmp.b last_right(a4),d0
-        beq.s .left
-        move.b d0,last_right(a4)
-        tst.b d0
-        beq.s .left
+        bsr right_edge
+        bpl.s .left
         not.b negative(a4)
         clr.b behind(a4)
         st dirty(a4)
-.left:  btst #6,$bfe001
-        seq d0
-        cmp.b last_left(a4),d0
-        beq .done
-        move.b d0,last_left(a4)
-        tst.b d0
-        beq .done
+.left:  bsr left_edge
+        bpl .done
         tst.b delete_mode(a4)           ; Shift while erasing: delete a piece
         beq.s .place
-        cmpi.w #160,MOUSE_Y
+        cmpi.w #VIEW_ROWS,MOUSE_Y
         bhs .done
         bsr piece_delete
         bra .done
 .place: bsr brush_snap                  ; where the preview shows the piece
-        cmpi.w #160,MOUSE_Y
+        cmpi.w #VIEW_ROWS,MOUSE_Y
         bhs .done
         tst.w remaining(a4)
         beq .done
@@ -633,12 +674,12 @@ frame:
         cmp.w last_scroll(a4),d0
         bne.s .redraw
         move.w MOUSE_Y,d0
-        cmp.w #160,d0
+        cmp.w #VIEW_ROWS,d0
         blo.s .viewport
         ; Cursor over the panel: there is no preview to move, so only the
         ; coordinates change. Update them without redrawing the viewport,
         ; unless the cursor just left the viewport and its preview must go.
-        cmpi.w #160,last_y(a4)
+        cmpi.w #VIEW_ROWS,last_y(a4)
         blo.s .redraw
         move.w d0,last_y(a4)
         move.w MOUSE_X,last_x(a4)
@@ -728,7 +769,7 @@ record_placement:
 
 ; Scroll the level while the cursor touches the left or right screen edge.
 scroll:
-        cmpi.w #160,MOUSE_Y
+        cmpi.w #VIEW_ROWS,MOUSE_Y
         bhs .done
         tst.w MOUSE_X
         bne.s .right
@@ -739,16 +780,16 @@ scroll:
 .right: cmpi.w #319,MOUSE_X
         bne.s .done
         addi.w #16,VIEW_SCROLL
-        cmpi.w #1280,VIEW_SCROLL
+        cmpi.w #SCROLL_MAX,VIEW_SCROLL
         bls.s .done
-        move.w #1280,VIEW_SCROLL
+        move.w #SCROLL_MAX,VIEW_SCROLL
 .done:  rts
 
 ; Cursor position in level coordinates.
 coordinates:
         move.w MOUSE_X,d0
         add.w VIEW_SCROLL,d0
-        add.w #16,d0
+        add.w #VIEW_LEFT,d0
         move.w d0,brush_x(a4)
         move.w MOUSE_Y,d0
         addq.w #4,d0
@@ -1018,12 +1059,10 @@ mask_bounds:
         rts
 
 ; Size and graphics of the selected piece, from the level's style data.
+; Clobbers D0/D1/A0.
 descriptor:
-        movea.l G_STYLE(a5),a0
-        move.w piece_id(a4),d0
-        mulu #12,d0
-        lea $290(a0),a0
-        adda.w d0,a0
+        move.w piece_id(a4),d1
+        bsr.s piece_desc
         move.w (a0),width(a4)
         move.w 2(a0),height(a4)
         move.w (a0),d0
@@ -1039,6 +1078,53 @@ descriptor:
         move.l 8(a0),d0
         add.l d1,d0
         move.l d0,mask_ptr(a4)
+        rts
+
+; D1: a piece number (bits 0..5 of a terrain piece). A0 returns its
+; descriptor in the level's style. Preserves every other register.
+piece_desc:
+        move.l d1,-(sp)
+        and.w #$3f,d1
+        movea.l G_STYLE(a5),a0
+        lea PIECE_DESC(a0),a0
+        mulu #PIECE_SIZE,d1
+        adda.w d1,a0
+        move.l (sp)+,d1
+        rts
+
+; A0: a style's data. D0 returns its number of terrain pieces: the
+; descriptors before the first empty one.
+style_pieces:
+        move.l a0,-(sp)
+        lea PIECE_DESC(a0),a0
+        moveq #0,d0
+.piece: tst.w (a0)
+        beq.s .done
+        tst.w 2(a0)
+        beq.s .done
+        addq.w #1,d0
+        lea PIECE_SIZE(a0),a0
+        cmp.w #PIECE_TYPES,d0
+        blo.s .piece
+.done:  movea.l (sp)+,a0
+        rts
+
+; A0: a style's data. D0 returns its number of object types: the
+; descriptors before the first empty one.
+style_objects:
+        movem.l d1/a0-a1,-(sp)
+        lea OBJECT_DESC(a0),a1
+        moveq #0,d0
+.type:  movea.l a1,a0
+        moveq #OBJECT_SIZE/2-1,d1
+.word:  tst.w (a0)+
+        dbne d1,.word
+        beq.s .done
+        lea OBJECT_SIZE(a1),a1
+        addq.w #1,d0
+        cmp.w #OBJECT_TYPES,d0
+        blo.s .type
+.done:  movem.l (sp)+,d1/a0-a1
         rts
 
 ; Gameplay input hook: skip the game's mouse and keyboard actions while the
@@ -1074,7 +1160,7 @@ overlay:
         bra.s .status
 .steel: bsr steel_draw
         bra.s .status
-.brush: cmpi.w #160,MOUSE_Y
+.brush: cmpi.w #VIEW_ROWS,MOUSE_Y
         bhs.s .status
         tst.b delete_mode(a4)           ; deleting: the cursor and an outline
         beq.s .preview
@@ -1115,79 +1201,159 @@ overlay:
 ; 16..335). Positive mode replaces masked pixels with the image planes;
 ; negative mode clears masked pixels in all four planes; behind mode, as the
 ; game's own drawing, adds the image only where the destination's fourth
-; plane (solid terrain) is clear. Every piece's image lies inside its mask.
+; plane (solid terrain) is clear. Every piece's image lies inside its mask
+; (all pieces of both games).
+;
+; Only the rows inside the clip window are visited. A source byte whose two
+; destination bytes are both inside it takes the fast path: positive and
+; negative mode write both bytes at once as a word when the first is at an
+; even address. The other bytes, and behind mode, take the careful path,
+; which never touches a destination byte outside the window.
 ; A5/A6 are preserved.
 composite:
-        move.w d2,mode(a4)
         move.w width(a4),d3
         lsr.w #1,d3
         sub.w d3,d0
         move.w height(a4),d3
         lsr.w #1,d3
-        sub.w d3,d1
-        move.w d0,origin_x(a4)
-        move.w d1,origin_y(a4)
+        sub.w d3,d1                     ; D0/D1: the piece's top left corner
+        movem.l a5-a6,-(sp)
         cmp.w #1,d2
         beq.s .preview
-        move.l #TERRAIN,dest_ptr(a4)
-        move.l #TERRAIN_PLANE,dplane(a4)
-        move.w #204,row_stride(a4)
+        lea (TERRAIN).l,a0
+        movea.l #TERRAIN_PLANE,a5
+        move.w #TERRAIN_ROW,d4
         tst.w d2
         bne.s .setup                    ; mode 2: the caller's clip window
         clr.w clip_top(a4)
-        move.w #168,clip_rows(a4)
+        move.w #TERRAIN_ROWS,clip_rows(a4)
         clr.w clip_lo(a4)
-        move.w #204,clip_span(a4)
+        move.w #TERRAIN_ROW,clip_span(a4)
         bra.s .setup
 .preview:
-        move.l G_VIEW_BACK(a5),dest_ptr(a4)
-        move.l #VIEW_PLANE,dplane(a4)
-        move.w #44,row_stride(a4)
+        movea.l G_VIEW_BACK(a5),a0
+        movea.w #VIEW_PLANE,a5
+        moveq #VIEW_ROW,d4
         clr.w clip_top(a4)
-        move.w #160,clip_rows(a4)
-        move.w #2,clip_lo(a4)
-        move.w #40,clip_span(a4)
-.setup: moveq #7,d5
-        and.w d0,d5             ; pixel shift within a destination byte
+        move.w #VIEW_ROWS,clip_rows(a4)
+        move.w #VIEW_LEFT/8,clip_lo(a4)
+        move.w #VIEW_WIDTH/8,clip_span(a4)
+.setup: move.w clip_top(a4),d3          ; the first and the last source row
+        sub.w d1,d3                     ; inside the window
+        bpl.s .first
+        moveq #0,d3
+.first: move.w clip_top(a4),d6
+        add.w clip_rows(a4),d6
+        sub.w d1,d6
+        cmp.w height(a4),d6
+        ble.s .last
+        move.w height(a4),d6
+.last:  sub.w d3,d6
+        ble .done                       ; no row inside it
+        move.w d6,rows_left(a4)
+        add.w d3,d1
+        mulu d4,d1
+        adda.l d1,a0                    ; the destination row of the first one
+        sub.w stride(a4),d4
+        move.w d4,row_skip(a4)
+        moveq #7,d5
+        and.w d0,d5                     ; pixel shift within a destination byte
         neg.w d5
-        addq.w #8,d5            ; D5 = 8 - shift: byte << D5 spans two bytes
-        asr.w #3,d0             ; floor division also for negative origins
-        move.w d0,origin_q(a4)
-        movem.l a5-a6,-(sp)
-        move.l plane_size(a4),d2
-        movea.l dplane(a4),a5
-        clr.w source_y(a4)
-.row:   move.w origin_y(a4),d0
-        add.w source_y(a4),d0
-        move.w d0,d3
-        sub.w clip_top(a4),d3
-        cmp.w clip_rows(a4),d3
-        bhs .next_row           ; unsigned compare also rejects rows above
-        mulu row_stride(a4),d0
-        movea.l dest_ptr(a4),a0
-        adda.l d0,a0
-        move.w origin_q(a4),d7
-        adda.w d7,a0            ; only dereferenced for clipped-in columns
-        move.w source_y(a4),d0
-        tst.b flipped(a4)
-        beq.s .source_row
-        neg.w d0                ; flip mask and colours together
-        add.w height(a4),d0
+        addq.w #8,d5                    ; D5 = 8 - shift: byte << D5 spans two bytes
+        asr.w #3,d0                     ; floor division also for negative origins
+        adda.w d0,a0                    ; only dereferenced for clipped-in columns
+        sub.w clip_lo(a4),d0
+        move.w d0,col_start(a4)
+        move.w clip_span(a4),d0
         subq.w #1,d0
-.source_row:
-        mulu stride(a4),d0
+        tst.b behind(a4)
+        beq.s .inner
+        moveq #0,d0                     ; behind: the careful path throughout
+.inner: move.w d0,clip_inner(a4)
+        move.w stride(a4),d0
+        moveq #0,d1
+        tst.b flipped(a4)
+        beq.s .upright
+        neg.w d3                        ; flip mask and colours together
+        add.w height(a4),d3
+        subq.w #1,d3
+        move.w d0,d1
+        add.w d1,d1
+        neg.w d1                        ; a row back after each row
+.upright:
+        move.w d1,src_skip(a4)
+        mulu d3,d0
         movea.l mask_ptr(a4),a1
         adda.l d0,a1
         movea.l image_ptr(a4),a2
         adda.l d0,a2
+        move.l plane_size(a4),d2
+.row:   move.w col_start(a4),d7         ; D7: the byte column - clip_lo
         move.w stride(a4),d6
         subq.w #1,d6
 .byte:  moveq #0,d0
         move.b (a1)+,d0
-        beq .next_byte          ; fully transparent source byte
-        lsl.w d5,d0             ; D0 = mask over destination bytes q and q+1
-        move.w d7,d3
-        sub.w clip_lo(a4),d3
+        beq .next_byte                  ; fully transparent source byte
+        lsl.w d5,d0                     ; D0 = mask over destination bytes q and q+1
+        cmp.w clip_inner(a4),d7
+        bhs .edge                       ; unsigned compare also rejects columns left
+        movea.l a0,a3
+        movea.l a2,a6
+        moveq #3,d4
+        tst.b negative(a4)
+        bne.s .fast_erase
+        move.w a0,d1
+        btst #0,d1
+        bne.s .fast_odd
+        not.w d0                        ; D0 = bits to keep in bytes q and q+1
+.fast_even:
+        moveq #0,d1
+        move.b (a6),d1
+        lsl.w d5,d1                     ; the image over bytes q and q+1
+        and.w d0,(a3)
+        or.w d1,(a3)
+        adda.l d2,a6
+        adda.l a5,a3
+        dbra d4,.fast_even
+        bra .next_byte
+.fast_odd:
+        move.w d0,d3
+        lsr.w #8,d3
+        not.b d3                        ; D3 = bits to keep in byte q
+        not.w d0                        ; and D0 in byte q+1
+        moveq #0,d1
+.fast_plane:
+        move.b (a6),d1
+        lsl.w d5,d1
+        and.b d3,(a3)
+        and.b d0,1(a3)
+        or.b d1,1(a3)
+        lsr.w #8,d1                     ; also clears the high byte for the next plane
+        or.b d1,(a3)
+        adda.l d2,a6
+        adda.l a5,a3
+        dbra d4,.fast_plane
+        bra .next_byte
+.fast_erase:
+        not.w d0
+        move.w a0,d1
+        btst #0,d1
+        bne.s .erase_odd
+.erase_even:
+        and.w d0,(a3)
+        adda.l a5,a3
+        dbra d4,.erase_even
+        bra .next_byte
+.erase_odd:
+        move.w d0,d1
+        lsr.w #8,d1
+.erase_byte:
+        and.b d1,(a3)
+        and.b d0,1(a3)
+        adda.l a5,a3
+        dbra d4,.erase_byte
+        bra .next_byte
+.edge:  move.w d7,d3
         cmp.w clip_span(a4),d3
         blo.s .high_in
         and.w #$00ff,d0
@@ -1284,12 +1450,12 @@ composite:
         addq.l #1,a0
         addq.w #1,d7
         dbra d6,.byte
-.next_row:
-        addq.w #1,source_y(a4)
-        move.w source_y(a4),d0
-        cmp.w height(a4),d0
-        blo .row
-        movem.l (sp)+,a5-a6
+        adda.w row_skip(a4),a0
+        adda.w src_skip(a4),a1
+        adda.w src_skip(a4),a2
+        subq.w #1,rows_left(a4)
+        bne .row
+.done:  movem.l (sp)+,a5-a6
         rts
 
 ; Show or hide the status block by redirecting the end of the game's copper
@@ -1352,7 +1518,6 @@ status_title:
 .title: moveq #0,d0
         move.b (a2)+,d0
         bsr glyph
-        addq.w #8,d4
         dbra d6,.title
         rts
 
@@ -1362,7 +1527,7 @@ status_force:
         move.w #$8000,shown_y(a4)
         move.w d0,shown_piece(a4)
         move.w d0,shown_remaining(a4)
-        move.w #$0101,shown_sign(a4)
+        move.w #$ff01,shown_sign(a4) ; and shown_flip
         move.b #1,shown_snap(a4)
 status_values:
         cmp.b #3,edit_mode(a4)          ; the parameters use the first column
@@ -1390,7 +1555,8 @@ status_values:
         lea CHIP_TEXT+0*640,a3
         move.w #32*8,d4
         bsr number
-.sign:  move.b negative(a4),d0          ; 0 add, -1 erase, 2 behind, 3 delete
+.sign:  move.b negative(a4),d0          ; 0 add, 1 erase, 2 behind, 3 delete
+        and.b #1,d0
         tst.b behind(a4)
         beq.s .deleting
         moveq #2,d0
@@ -1404,29 +1570,14 @@ status_values:
         move.b d0,shown_sign(a4)
         lea CHIP_TEXT+2*640,a3
         move.w #32*8,d4
-        lea brush_add(pc),a2
-        tst.b d0
-        beq.s .brush_text
-        lea brush_erase(pc),a2
-        bmi.s .brush_text
-        lea brush_behind(pc),a2
-        cmp.b #2,d0
-        beq.s .brush_text
-        lea brush_delete(pc),a2
-.brush_text:
-        moveq #5,d6
-.brush_char:
-        moveq #0,d0
-        move.b (a2)+,d0
-        bsr glyph
-        addq.w #8,d4
-        dbra d6,.brush_char
+        ext.w d0
+        lsl.w #3,d0
+        lea brush_texts(pc),a2
+        adda.w d0,a2
+        bsr glyph_text
         lea status_rmb_add(pc),a2       ; the right button's help
-        move.b shown_sign(a4),d0
-        bmi.s .erase_help
-        cmp.b #3,d0
-        bne.s .help
-.erase_help:
+        btst #0,shown_sign(a4)          ; erasing or deleting
+        beq.s .help
         lea status_rmb_erase(pc),a2
 .help:  bsr status_texts
 .flip:  move.b flipped(a4),d0
@@ -1435,18 +1586,7 @@ status_values:
         move.b d0,shown_flip(a4)
         lea CHIP_TEXT+3*640,a3
         move.w #52*8,d4
-        lea flip_off(pc),a2
-        tst.b flipped(a4)
-        beq.s .flip_state
-        lea flip_on(pc),a2
-.flip_state:
-        moveq #2,d6
-.flip_text:
-        moveq #0,d0
-        move.b (a2)+,d0
-        bsr glyph
-        addq.w #8,d4
-        dbra d6,.flip_text
+        bsr.s status_on_off
 .remaining:
         move.b edit_mode(a4),d0         ; snap with the brush and the objects
         beq.s .snap
@@ -1458,18 +1598,7 @@ status_values:
         move.b d0,shown_snap(a4)
         lea CHIP_TEXT+5*640,a3
         move.w #12*8,d4
-        lea flip_off(pc),a2
-        tst.b d0
-        beq.s .snap_state
-        lea flip_on(pc),a2
-.snap_state:
-        moveq #2,d6
-.snap_text:
-        moveq #0,d0
-        move.b (a2)+,d0
-        bsr glyph
-        addq.w #8,d4
-        dbra d6,.snap_text
+        bsr.s status_on_off
 .room_left:
         move.w remaining(a4),d0
         cmp.w shown_remaining(a4),d0
@@ -1478,18 +1607,28 @@ status_values:
         lea CHIP_TEXT+4*640,a3
         move.w #12*8,d4
         tst.w d0
-        bne.s .room
-        lea full_text(pc),a2
-        moveq #3,d6
-.full:  moveq #0,d0
-        move.b (a2)+,d0
-        bsr glyph
-        addq.w #8,d4
-        dbra d6,.full
-        bra.s .done
-.room:
-        bsr number
+        bne.s number
+        lea txt_full(pc),a2
+        bra.s glyph_text
 .done:  rts
+
+; D0: a flag. Draw On or Off at A3/D4.
+status_on_off:
+        lea txt_off(pc),a2
+        tst.b d0
+        beq.s glyph_text
+        lea txt_on(pc),a2
+
+; A2: text, ended by NUL. Draw it from the cell at A3/D4 on; A2 and D4 return
+; past it. Clobbers D0.
+glyph_text:
+        moveq #0,d0
+        move.b (a2)+,d0
+        beq.s .done
+        bsr.s glyph
+        bra.s glyph_text
+.done:  rts
+
 ; Draw D0 as four decimal digits, or a negative D0 as a minus and three.
 number:
         movem.l d0-d7/a0-a2,-(sp)
@@ -1499,8 +1638,7 @@ number:
         neg.w d0
         move.w d0,-(sp)
         moveq #'-',d0
-        bsr glyph
-        addq.w #8,d4
+        bsr.s glyph
         move.w (sp)+,d0
         moveq #2,d6
 .digits:
@@ -1513,8 +1651,7 @@ number:
 .loop:  rol.l #8,d5
         moveq #0,d0
         move.b d5,d0
-        bsr glyph
-        addq.w #8,d4
+        bsr.s glyph
         dbra d6,.loop
         movem.l (sp)+,d0-d7/a0-a2
         rts
@@ -1533,9 +1670,26 @@ prepare_font:
         dbra d4,.row
         dbra d5,.char
         rts
-; Draw character D0 into one 8x8 cell.
+; Draw character D0 into the 8x8 cell at A3 (text row) and D4 (pixel), and
+; move D4 to the next cell.
 glyph:
         movem.l d0-d1/a0-a1,-(sp)
+        bsr.s font_glyph
+        movea.l a3,a1
+        move.w d4,d0
+        lsr.w #3,d0
+        adda.w d0,a1
+        moveq #7,d1
+.row:   move.b (a0)+,(a1)
+        lea 80(a1),a1
+        dbra d1,.row
+        addq.w #8,d4
+        movem.l (sp)+,d0-d1/a0-a1
+        rts
+
+; D0: character. A0 returns its 8x8 glyph in the font; a character outside
+; the font is a space. D0 is changed.
+font_glyph:
         cmp.w #32,d0
         bls.s .blank
         cmp.w #126,d0
@@ -1545,15 +1699,6 @@ glyph:
         lsl.w #3,d0
         lea font(pc),a0
         adda.w d0,a0
-        movea.l a3,a1
-        move.w d4,d0
-        lsr.w #3,d0
-        adda.w d0,a1
-        moveq #7,d1
-.row:   move.b (a0)+,(a1)
-        lea 80(a1),a1
-        dbra d1,.row
-.done:  movem.l (sp)+,d0-d1/a0-a1
         rts
 
 copper_template:
@@ -1568,13 +1713,15 @@ COPPER_TEXT     equ *-copper_template
         dc.w $ffff,$fffe
 copper_end:
 ground_name: dc.b 'Ground1',0
-flip_off: dc.b 'Off'
-flip_on: dc.b 'On '
-brush_add: dc.b '+     '
-brush_erase: dc.b '-     '
-brush_behind: dc.b 'Behind'
-brush_delete: dc.b 'Delete'
-full_text: dc.b 'Full'
+txt_off: dc.b 'Off',0
+txt_on: dc.b 'On ',0
+txt_full: dc.b 'Full',0
+; The brush field by the brush's state (status_values), eight bytes each.
+brush_texts:
+        dc.b '+     ',0,0
+        dc.b '-     ',0,0
+        dc.b 'Behind',0,0
+        dc.b 'Delete',0,0
 
 ; Original 5x7 ASCII bitmap font, authored for the editor.
 ; Seven rows per glyph; the low five bits run left to right.
@@ -1674,8 +1821,6 @@ font_source:
         dc.b $04,$04,$04,$04,$04,$04,$04 ; $7c |
         dc.b $18,$04,$04,$02,$04,$04,$18 ; $7d }
         dc.b $00,$00,$09,$16,$00,$00,$00 ; $7e ~
-        even
-
         even
 
 ; In Lemmings the image is stored packed in the file Editor on disk 1, behind

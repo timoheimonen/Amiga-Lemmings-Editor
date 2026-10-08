@@ -1,4 +1,4 @@
-; Lemmings In-Game Level Editor V2.3
+; Lemmings In-Game Level Editor V2.3.1
 ; Copyright (c) 2026 Timo Heimonen <timo.heimonen@proton.me>
 ; Licensed under the MIT License. See the LICENSE file for details.
 ;
@@ -9,6 +9,7 @@
 ; ---------------------------------------------------------------------------
 ; Global variables, relative to A5
 
+G_DRIVE         equ $02                 ; byte: CIA-B select bit of the loader's drive, 3..6
 G_RAW_KEY       equ $26                 ; byte: last raw key code
 G_LEVEL_ENDING  equ $29                 ; byte: the level ends (Esc, time out)
 G_SHUTDOWN      equ $2b                 ; byte: set while a level shuts down
@@ -51,6 +52,10 @@ TERRAIN_PLANE   equ $85e0
 GROUND_BASE     equ $75578              ; style piece offsets are relative to it
 OBJECT_BASE     equ 0                   ; object frame pointers are addresses
 VIEW_PLANE      equ $2100               ; viewport plane: 44 bytes x 192 rows
+VIEW_BUFFER_1   equ $23940              ; the two viewport buffers G_VIEW_BACK alternates
+VIEW_BUFFER_2   equ $2bd40              ; between; G_VIEW_FRONT is 2 bytes on
+RAW_TRACK       equ $58800              ; the raw track buffer, idle on the title screen
+DISK_CYLINDER   equ $83c2               ; byte: the loader's cylinder, negative: home first
 GAME_ROWS       equ $a3c0               ; the game's A4: row y at y * 204
 LEVELDATA       equ $1f7a2              ; leveldata: $590 bytes per style
 STYLE_SIZE      equ $590
@@ -62,6 +67,8 @@ SKILL_SPRITE    equ $144f2              ; skill selection sprite
 KEY_ASCII       equ $a526               ; raw key to ASCII, without shift
 KEY_ASCII_SHIFT equ $a586               ; and with shift
 TEXT_SCREEN     equ $23680              ; text screen bitmap
+TITLE_PLANE     equ $4100               ; the title screen: 640 x 208, four planes
+SIGNS           equ $4690a              ; the rating signs, 96 x 30, $5A0 bytes each (file Icons)
 COPPER_DIWSTOP  equ $84ee               ; copper value word of DIWSTOP
 COPPER_END      equ $8668               ; end of the copper list, 12 bytes
 VIEW_PALETTE    equ $850e               ; copper value word of COLOR00
@@ -102,6 +109,7 @@ MINIMAP_REFRESH equ $4a78
 MINIMAP_COLUMN  equ $4aa4
 CLEAR_GUARDS    equ $4b3a               ; clears the terrain's collision guard rows
 BRIEF_PREVIEW   equ $4b58
+SETUP_BLIT      equ $7014               ; D0/D1: width and height of the surface
 BLIT            equ $704c
 SOUND_CONTROL   equ $17268              ; D0 = -1 stops the music
 RESULT_COMMENT  equ $82a
@@ -143,6 +151,29 @@ MATCH_NEXT      equ $920
 MATCH_WINNER    equ $96a
 HOOK_MATCH_END  equ $9be                ; end of the match: back to the title screen
 MATCH_END_DONE  equ $9c6
+
+; Start-up, hooked by bootstrap.s
+HOOK_RESERVE    equ $3916               ; file cache: ADDA.L $8.W,A1 / MOVE.L A1,G_CACHE_END(A5)
+RESERVE_DONE    equ $391e
+HOOK_LOAD       equ $50a                ; BSR FIND_DISK2 / TST.W D0
+LOAD_DONE       equ $510
+HOOK_INSTALL    equ $548                ; BSR LOAD_METADATA / BSR LOAD_ICONS
+INSTALL_DONE    equ $550
+FIND_DISK2      equ $3c6e               ; D0 = 0 when disk 2 is in a drive
+LOAD_METADATA   equ $3d48               ; loads and unpacks leveldata
+DISK_LOADER     equ $7fb2               ; D1: operation, 0 loads file A0 to A1, 5 finds a disk
+DIR_BUFFER      equ $1e7a2              ; the loader's directory buffer
+
+; Title screen
+TITLE_IDLE      equ $33ae               ; back to the title screen's loop
+HOOK_CLICK      equ $33c0               ; a click: LEA MOUSE,A3 / MOVE.W 6(A3),D0
+CLICK_DONE      equ $33c8
+HOOK_SIGN       equ $2cca               ; the rating sign: its surface
+SIGN_DONE       equ $2cd6
+HOOK_UP         equ $35ca               ; up arrow: CMP.W #3,D0 / BEQ.W TITLE_IDLE
+UP_NEXT         equ $35d2
+HOOK_DOWN       equ $35fc               ; down arrow: MOVE.W G_RATING(A5),D0 / BEQ.W TITLE_IDLE
+DOWN_NEXT       equ $3604
 
 TWO_PLAYER      equ 1                   ; the game has a two-player mode
 

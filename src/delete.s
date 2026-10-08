@@ -1,4 +1,4 @@
-; Lemmings In-Game Level Editor V2.3
+; Lemmings In-Game Level Editor V2.3.1
 ; Copyright (c) 2026 Timo Heimonen <timo.heimonen@proton.me>
 ; Licensed under the MIT License. See the LICENSE file for details.
 ;
@@ -55,8 +55,7 @@ piece_outline:
         and.w #$1fff,d0                 ; x
         move.w d1,d3
         asr.w #7,d3                     ; y, signed
-        and.w #$3f,d1
-        bsr.s piece_size
+        bsr piece_desc
         move.w d0,d2
         sub.w (VIEW_SCROLL).l,d2              ; left: world x - scroll
         move.w d2,d4
@@ -68,18 +67,6 @@ piece_outline:
         subq.w #1,d5                    ; bottom
         bsr outline_box
 .done:  movem.l (sp)+,d0-d5/a0
-        rts
-
-; D1: piece number (bits 0..5). Return in A0 its descriptor in the style:
-; width, height, image and mask.
-piece_size:
-        move.w d1,-(sp)
-        and.w #$3f,d1
-        movea.l G_STYLE(a5),a0
-        lea $290(a0),a0
-        mulu #12,d1
-        adda.w d1,a0
-        move.w (sp)+,d1
         rts
 
 ; The piece under the cursor (brush_x/brush_y). Return its number in the
@@ -94,7 +81,7 @@ piece_hover:
         tst.w (LEVEL_RECORD+$1c).l                 ; a special background has no pieces
         bne.s .done
         movea.l G_STYLE(a5),a1              ; the largest width and height
-        lea $290(a1),a1
+        lea PIECE_DESC(a1),a1
         move.w piece_count(a4),d2
         subq.w #1,d2
         moveq #0,d0
@@ -106,7 +93,7 @@ piece_hover:
         cmp.w 2(a1),d1
         bhs.s .type
         move.w 2(a1),d1
-.type:  lea 12(a1),a1
+.type:  lea PIECE_SIZE(a1),a1
         dbra d2,.size
         movea.w d0,a0
         movea.w d1,a1
@@ -170,7 +157,7 @@ piece_covers:
         add.w brush_y(a4),d3            ; row in the piece
         bmi.s .no
         move.w d0,d1
-        bsr piece_size
+        bsr piece_desc
         cmp.w (a0),d2
         bhs.s .no
         cmp.w 2(a0),d3

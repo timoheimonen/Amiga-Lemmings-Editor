@@ -1,4 +1,4 @@
-; Lemmings In-Game Level Editor V2.3
+; Lemmings In-Game Level Editor V2.3.1
 ; Copyright (c) 2026 Timo Heimonen <timo.heimonen@proton.me>
 ; Licensed under the MIT License. See the LICENSE file for details.
 ;
@@ -69,16 +69,7 @@ level_list_two:
         st list_players(a4)
         endif
 list_enter:
-        clr.b list_mode(a4)
-        clr.w list_page(a4)
-        clr.w list_sel(a4)
-        move.b G_TEXT_MODE(a5),list_old32(a4)
-        move.w G_LEVEL(a5),list_old42(a4)
-        ifd G_TRIES
-        move.b G_TRIES(a5),list_old_tries(a4)
-        endif
-        lea (FADE_BLACK).l,a0
-        jsr FADE
+        bsr list_begin
 
 ; Entered with a jump after a custom level, at the top level; the screen is
 ; black. The page and selection stay.
@@ -139,7 +130,7 @@ list_loop:
         ; directory of disk 2 too: disk 2 must be back in the game's drive.
         bsr list_disk2
         beq.s .fade
-        bsr list_buttons
+        bsr latch_buttons
         tst.b list_mode(a4)
         bne.s .styles
         bsr list_search                 ; cancelled: the list again
@@ -149,8 +140,7 @@ list_loop:
         bra list_loop
 .fade:
         endif
-        lea (FADE_BLACK).l,a0
-        jsr FADE
+        bsr fade_black
         bsr list_close
         clr.b custom_play(a4)
         clr.b custom_edit(a4)
@@ -166,12 +156,29 @@ list_loop:
 .title: lea (GAME_ROWS).l,a4             ; the game's A4 throughout
         jmp TITLE_LOOP
 
+; From the title screen: keep the game's state that the list changes, to
+; give it back when the list returns to the title screen (list_loop), start
+; at the first page and fade the title screen out.
+list_begin:
+        clr.w list_page(a4)
+        clr.w list_sel(a4)
+        move.b G_TEXT_MODE(a5),list_old32(a4)
+        move.w G_LEVEL(a5),list_old42(a4)
+        ifd G_TRIES
+        move.b G_TRIES(a5),list_old_tries(a4)
+        endif
+
+; Fade the screen to black.
+fade_black:
+        lea (FADE_BLACK).l,a0
+        jmp FADE
+
 ; A0: message. Show it with the hint that a click looks for the levels
 ; again, and continue in the list's input loop.
 list_failed:
         lea txt_list_again(pc),a3
         bsr list_message_more
-        bsr list_buttons
+        bsr latch_buttons
         st list_retry(a4)
         clr.w list_count(a4)
         bra list_loop
@@ -225,7 +232,7 @@ list_start:
         clr.b custom_edit(a4)           ; cancelled: back to the list
         clr.b load_reopen(a4)
         bsr list_show
-        bsr list_buttons
+        bsr latch_buttons
         bra list_loop
 .disk2:
         endif
@@ -257,8 +264,7 @@ list_start:
         swap d0                         ; the tune rotation of 17 by its number
         move.w d0,G_LEVEL(a5)
         clr.w G_RATING(a5)
-        lea (FADE_BLACK).l,a0
-        jsr FADE
+        bsr fade_black
         bsr list_close
         ifd TWO_PLAYER
         tst.b list_players(a4)
@@ -298,43 +304,29 @@ list_disk2:
         movem.l d0-d2/a0,-(sp)
         st title_disk(a4)               ; the transport uses the raw track buffer
 .check: moveq #0,d0
-        move.b 2(a5),d0                 ; CIA bit of the game's drive
+        move.b G_DRIVE(a5),d0           ; CIA bit of the game's drive
         subq.b #3,d0
         moveq #0,d1
         bsr disk_read_track
         tst.l d0
         bne.s .ask
-        lea install(pc),a0
-        adda.l #DISK_TRACK+$410,a0
-        cmpi.l #'Grou',(a0)
-        bne.s .ask
-        cmpi.l #'nd1'<<8,4(a0)
+        bsr is_disk2
         beq.s .done
-.ask:   move.b 2(a5),d0
+.ask:   move.b G_DRIVE(a5),d0
         add.b #'0'-3,d0
         lea txt_list_disk2_drive(pc),a0
         move.b d0,(a0)
         lea txt_list_disk2(pc),a0
         bsr list_message
-        bsr list_buttons
+        bsr latch_buttons
 .wait:  jsr WAIT_FRAME
         bsr menu_next_key
         cmp.w #KEY_ESC,d0
         beq.s .cancel
-        btst #2,$16(a6)
-        seq d0
-        cmp.b last_right(a4),d0
-        beq.s .left
-        move.b d0,last_right(a4)
-        tst.b d0
-        bne.s .cancel
-.left:  btst #6,$bfe001
-        seq d0
-        cmp.b last_left(a4),d0
-        beq.s .wait
-        move.b d0,last_left(a4)
-        tst.b d0
-        beq.s .wait
+        bsr right_edge
+        bmi.s .cancel
+        bsr left_edge
+        bpl.s .wait
         lea txt_list_searching_disk2(pc),a0
         bsr list_message
         bra .check
@@ -454,8 +446,7 @@ custom_won:
         lea (FADE_RESULT).l,a0
         jsr FADE
         jsr WAIT_CLICK
-        lea (FADE_BLACK).l,a0
-        jsr FADE
+        bsr fade_black
         move.l a4,-(sp)
         lea state(pc),a4
         tst.b custom_edit(a4)
@@ -469,8 +460,7 @@ custom_won:
 ; level, and back to the editor after a test play (the left button retries it
 ; through the level loader, as the game does).
 custom_quit:
-        lea (FADE_BLACK).l,a0
-        jsr FADE
+        bsr fade_black
         move.l a4,-(sp)
         lea state(pc),a4
         tst.b custom_edit(a4)
@@ -498,8 +488,7 @@ custom_ended:
         ifd G_MUSIC
         clr.b G_MUSIC(a5)               ; as the replaced instructions do
         endif
-        lea (FADE_BLACK).l,a0
-        jsr FADE
+        bsr fade_black
         bra level_list_return
 .game:  movea.l (sp)+,a4
         RESUME_ENDED
@@ -567,28 +556,18 @@ level_new:
         lea state(pc),a4
         lea $dff000,a6
         clr.b list_players(a4)
-        move.b G_TEXT_MODE(a5),list_old32(a4)
-        move.w G_LEVEL(a5),list_old42(a4)
-        ifd G_TRIES
-        move.b G_TRIES(a5),list_old_tries(a4)
-        endif
-        lea (FADE_BLACK).l,a0
-        jsr FADE
+        bsr list_begin
         st list_mode(a4)
-        clr.w list_page(a4)
-        clr.w list_sel(a4)
         clr.b key_head(a4)
         clr.b key_tail(a4)
         clr.b list_retry(a4)
         st list_open(a4)
         clr.b title_disk(a4)
-        moveq #4,d1
-        move.w d1,list_count(a4)
         lea level_slots(pc),a0
         lea level_status(pc),a1
         lea level_titles(pc),a2
         ifd TWO_PLAYER
-        ; The five styles for one player, then for two players.
+        ; The styles for one player, then for two players.
         moveq #0,d0
 .style: move.w d0,(a0)+
         move.b #LS_OK,(a1)+
@@ -598,9 +577,9 @@ level_new:
         lea -32(a2),a2
         lea txt_styles(pc),a3
         move.w d0,d2
-        cmp.w #5,d2
+        cmp.w #STYLES,d2
         blo.s .skip
-        subq.w #5,d2
+        subq.w #STYLES,d2
         bra.s .skip
 .names: tst.b (a3)+
         bne.s .names
@@ -610,7 +589,7 @@ level_new:
         move.b d2,(a2)+
         bra.s .name
 .players:
-        cmp.w #5,d0
+        cmp.w #STYLES,d0
         blo.s .next
         lea txt_two_players(pc),a3
 .two:   move.b (a3)+,d2
@@ -622,9 +601,9 @@ level_new:
         move.w d0,d2
         lsl.w #5,d2
         adda.w d2,a2
-        cmp.w #10,d0
+        cmp.w #2*STYLES,d0
         blo.s .style
-        move.w #10,list_count(a4)
+        move.w d0,list_count(a4)
         else
         ; The game's styles (STYLE_MASK); level_slots holds their numbers.
         moveq #0,d0                     ; list entry
@@ -655,7 +634,7 @@ level_new:
         endif
         bsr list_show
         bsr list_fade_in
-        bsr list_buttons
+        bsr latch_buttons
         bra list_loop
 
 ; Build a new level of the selected style in custom_record and edit it.
@@ -673,9 +652,9 @@ list_new_level:
         lea custom_record(pc),a0
         move.w list_sel(a4),d0
         ifd TWO_PLAYER
-        cmp.w #5,d0
+        cmp.w #STYLES,d0
         blo.s .style
-        subq.w #5,d0                    ; for two players: other objects
+        subq.w #STYLES,d0               ; for two players: other objects
         lea $20(a0),a1
         lea new_level_two(pc),a2
         moveq #new_level_two_end-new_level_two-1,d1
@@ -767,18 +746,10 @@ list_search:
         swap d0
         move.w d0,list_sel(a4)
 .show:  bsr list_show
-        bra.s list_buttons
+        bra latch_buttons
 .message:
         bsr list_message
-
-; Remember the mouse buttons so that a press made before this point is not
-; taken as a click.
-list_buttons:
-        btst #6,$bfe001
-        seq last_left(a4)
-        btst #2,$16(a6)
-        seq last_right(a4)
-        rts
+        bra latch_buttons
 
 ; D0: raw key. Cursor keys move the selection and turn pages. D0 returns 1
 ; for Return (play), 2 for E (edit), 3 for Del (delete), otherwise 0, and 0
@@ -846,13 +817,8 @@ list_move:
 ; (D0 returns 1), a click on the page line turns the page. D0 returns -1 when
 ; the right button asks to leave, otherwise 0.
 list_mouse:
-        btst #2,$16(a6)
-        seq d0
-        cmp.b last_right(a4),d0
-        beq.s .left
-        move.b d0,last_right(a4)
-        tst.b d0
-        beq.s .left
+        bsr right_edge
+        bpl.s .left
         moveq #-1,d0
         rts
 .left:  bsr list_pointer_row
@@ -871,13 +837,8 @@ list_mouse:
         beq.s .button
         bsr list_select
 .button:
-        btst #6,$bfe001
-        seq d0
-        cmp.b last_left(a4),d0
-        beq.s .none
-        move.b d0,last_left(a4)
-        tst.b d0
-        beq.s .none
+        bsr left_edge
+        bpl.s .none
         tst.w list_count(a4)
         bne.s .page
         tst.b list_retry(a4)
@@ -1052,14 +1013,11 @@ list_message:
 list_message_more:
         movem.l d0-d7/a0-a3,-(sp)
         movea.l a0,a2
-        bsr list_screen
-        bsr list_default_palettes
-        lea list_text(pc),a1
         lea txt_list_head(pc),a0
         tst.b list_players(a4)
         beq.s .head
         lea txt_list_head_two(pc),a0
-.head:  bsr list_append
+.head:  bsr.s list_text_begin
         moveq #4,d1                     ; first message row
 .line:  move.b #2,(a1)+
         move.b d1,(a1)+
@@ -1078,13 +1036,26 @@ list_message_more:
         bra.s .line
 .last:  clr.b (a1)+
         lea txt_list_back(pc),a0
-        bsr list_append
-        move.b #$ff,(a1)
-        lea list_text(pc),a0
-        jsr DRAW_TEXT
+        bsr.s list_append
+        bsr.s list_text_draw
         bsr list_palettes
         movem.l (sp)+,d0-d7/a0-a3
         rts
+
+; A0: the heading's text entries. Clear the text screen, set the list's row
+; palettes and start the text entries in list_text with the heading; A1
+; returns past it. D0 is changed.
+list_text_begin:
+        bsr list_screen
+        bsr list_default_palettes
+        lea list_text(pc),a1
+        bra.s list_append
+
+; A1: past the last text entry in list_text. End the entries and draw them.
+list_text_draw:
+        move.b #$ff,(a1)
+        lea list_text(pc),a0
+        jmp DRAW_TEXT
 
 ; A0: complete text entries (column, row, text, NUL), ended by $FF. Append
 ; them at A1 without the end marker.
@@ -1106,9 +1077,6 @@ list_show:
         bne.s .styles
         bsr list_read_page
 .styles:
-        bsr list_screen
-        bsr list_default_palettes
-        lea list_text(pc),a1
         lea txt_list_head(pc),a0
         tst.b list_players(a4)
         beq.s .one
@@ -1116,7 +1084,7 @@ list_show:
 .one:   tst.b list_mode(a4)
         beq.s .head
         lea txt_new_head(pc),a0
-.head:  bsr list_append
+.head:  bsr list_text_begin
         ; "< Page nn of nn >"
         move.b #11,(a1)+
         move.b #1,(a1)+
@@ -1165,9 +1133,7 @@ list_show:
         beq.s .help
         lea txt_new_help(pc),a0
 .help:  bsr list_append
-        move.b #$ff,(a1)
-        lea list_text(pc),a0
-        jsr DRAW_TEXT
+        bsr list_text_draw
         move.w list_sel(a4),d1
         add.w #LIST_FIRST,d1
         lea list_palette_rows(a4),a0
@@ -1285,7 +1251,7 @@ list_find_disk:
         moveq #-1,d0
 .done:  rts
 .index: st list_retry(a4)
-        lea txt_list_index(pc),a0
+        lea txt_e_index(pc),a0
         moveq #-1,d0
         rts
 
@@ -1325,7 +1291,6 @@ list_try_drive:
         moveq #0,d0
 .done:  movem.l (sp)+,d1-d7/a1-a3
         rts
-        endif
 
 ; A0: complete track 0. Return 0 for a supported level disk with a valid
 ; index, otherwise DISK_WRONG or DISK_INDEX. Preserves A0.
@@ -1391,6 +1356,7 @@ validate_level_header:
 .index: moveq #DISK_INDEX,d0
 .done:  movem.l (sp)+,d1-d7/a0-a2
         rts
+        endif
 
 ; Read the titles of the current page that are not known yet.
 list_read_page:
@@ -1666,12 +1632,7 @@ levels_dir:
 ; the track is taken as well when it is listed and not known yet.
 list_read_level:
         movem.l d0-d7/a0-a3,-(sp)
-        moveq #0,d0
-        move.b list_drive(a4),d0
-        move.w d5,d1
-        lsr.w #1,d1
-        addq.w #1,d1
-        bsr disk_read_track
+        bsr.s read_slot_track
         move.l d0,d7
         and.w #$fffe,d6
         bsr.s .slot
@@ -1694,15 +1655,32 @@ list_read_level:
 ; Record its title when it holds a level that passes the checks, followed
 ; by zero padding; otherwise mark it damaged.
 list_take_slot:
-        lea LEVEL_SIZE(a0),a1
-        move.w #(LEVEL_SLOT_SIZE-LEVEL_SIZE)/4-1,d0
-.pad:   tst.l (a1)+
-        bne.s .bad
-        dbra d0,.pad
-        bra list_take_level
-.bad:   lea level_status(pc),a0
+        bsr.s slot_padding
+        beq list_take_level
+        lea level_status(pc),a0
         move.b #LS_DAMAGED,0(a0,d6.w)
         rts
+
+; A0: a slot in a track. Z set when the bytes after its level record are
+; zero, as in every saved slot. D0 is changed.
+slot_padding:
+        move.l a0,-(sp)
+        lea LEVEL_SIZE(a0),a0
+        move.w #(LEVEL_SLOT_SIZE-LEVEL_SIZE)/4-1,d0
+.pad:   tst.l (a0)+
+        dbne d0,.pad
+        movea.l (sp)+,a0
+        rts
+
+; D5: slot. Read the track that holds it from the level disk in list_drive
+; into DISK_TRACK; D0 returns the result of disk_read_track. D1 is changed.
+read_slot_track:
+        moveq #0,d0
+        move.b list_drive(a4),d0
+        move.w d5,d1
+        lsr.w #1,d1
+        addq.w #1,d1
+        bra disk_read_track
 
 ; D0: slot. A0 returns its place in the track read into DISK_TRACK.
 slot_in_track:
@@ -1732,25 +1710,13 @@ list_load_level:
         lea level_slots(pc),a0
         add.w d0,d0
         move.w 0(a0,d0.w),d5
-        moveq #0,d0
-        move.b list_drive(a4),d0
-        move.w d5,d1
-        lsr.w #1,d1
-        addq.w #1,d1
-        bsr disk_read_track
+        bsr read_slot_track
         tst.l d0
         bne.s .bad
-        lea install(pc),a0
-        adda.l #DISK_TRACK,a0
         move.w d5,d0
-        and.w #1,d0
-        mulu #LEVEL_SLOT_SIZE,d0
-        adda.w d0,a0
-        lea LEVEL_SIZE(a0),a1
-        move.w #(LEVEL_SLOT_SIZE-LEVEL_SIZE)/4-1,d0
-.pad:   tst.l (a1)+
+        bsr slot_in_track
+        bsr slot_padding
         bne.s .bad
-        dbra d0,.pad
         endif
         bsr check_level_record
         tst.l d0
@@ -1797,7 +1763,7 @@ check_level_record:
         bhi .bad
         dbra d2,.skill
         move.w $18(a2),d0               ; start position, steps of 4 up to 1280
-        cmp.w #1280,d0
+        cmp.w #SCROLL_MAX,d0
         bhi .bad
         and.w #3,d0
         bne .bad
@@ -1816,36 +1782,14 @@ check_level_record:
         tst.w $1e(a2)
         bne .bad
         ; Object and piece counts of the style.
-        lea (LEVELDATA).l,a1
+        lea (LEVELDATA).l,a0
         mulu #STYLE_SIZE,d3
-        adda.l d3,a1
-        lea $70(a1),a3                  ; object descriptors
-        movea.l a3,a0
-        moveq #0,d5
-.objects:
-        moveq #$22/2-1,d2
-.word:  tst.w (a0)+
-        dbne d2,.word
-        beq.s .counted
-        addq.w #1,d5
-        move.w d5,d0
-        mulu #$22,d0
-        lea 0(a3,d0.w),a0
-        cmp.w #16,d5
-        blo.s .objects
-.counted:
-        lea $290(a1),a0
-        moveq #0,d6
-.pieces:
-        tst.w (a0)
-        beq.s .limits
-        tst.w 2(a0)
-        beq.s .limits
-        addq.w #1,d6
-        lea 12(a0),a0
-        cmp.w #64,d6
-        blo.s .pieces
-.limits:
+        adda.l d3,a0
+        lea OBJECT_DESC(a0),a3
+        bsr style_objects
+        move.w d0,d5
+        bsr style_pieces
+        move.w d0,d6
         ; Objects: x = 0 is an empty slot; otherwise a known type, flags
         ; $000F, $400F, $800F or $C00F, and x and y in -4096..4095. The
         ; game's entrance table takes every slot of type 1, empty
@@ -1875,16 +1819,16 @@ check_level_record:
         bne .bad
         cmp.w #16,d2
         bhs.s .next_object
-        ; The trigger area: x >> 2 + x offset + width <= 408 and
+        ; The trigger area: x >> 2 + x offset + width <= GRID_WIDTH and
         ; y >> 2 + y offset + height <= GRID_ROWS, with x > 0 and y >= 0.
-        mulu #$22,d1
+        mulu #OBJECT_SIZE,d1
         lea $10(a3,d1.w),a1
         move.w (a0),d0
         bmi .bad
         lsr.w #2,d0
         add.w (a1),d0
         add.w 4(a1),d0
-        cmp.w #408,d0
+        cmp.w #GRID_WIDTH,d0
         bhi .bad
         move.w 2(a0),d0
         bmi .bad
@@ -1924,7 +1868,7 @@ check_level_record:
         bne .bad
         cmpa.l a1,a0
         blo.s .rest
-        ; Steel: x + width <= 408 and y + height <= GRID_ROWS-1 cells (rows y + 1
+        ; Steel: x + width <= GRID_WIDTH and y + height <= GRID_ROWS-1 cells (rows y + 1
         ; to y + height of the grid).
         moveq #31,d2
 .steel: move.w (a0)+,d0
@@ -1938,7 +1882,7 @@ check_level_record:
         rol.w #4,d4
         and.w #15,d4
         add.w d4,d3
-        cmp.w #407,d3
+        cmp.w #GRID_WIDTH-1,d3
         bhi.s .bad
         and.w #127,d0
         lsr.w #8,d1
@@ -1996,7 +1940,7 @@ two_player_level:
         moveq #0,d0
         move.w $1a(a2),d0
         mulu #STYLE_SIZE,d0
-        lea (LEVELDATA+$70).l,a3        ; object descriptors of the style
+        lea (LEVELDATA+OBJECT_DESC).l,a3 ; object descriptors of the style
         adda.l d0,a3
         moveq #0,d4                     ; bit 0 entrance, 1 blue exit, 2 green exit
         lea $20(a2),a0
@@ -2011,7 +1955,7 @@ two_player_level:
         bra.s .next
 .exit:  cmp.w #16,d7
         bhs.s .next
-        mulu #$22,d1
+        mulu #OBJECT_SIZE,d1
         lea 0(a3,d1.w),a1
         cmpi.w #1,$18(a1)
         bne.s .next
@@ -2091,12 +2035,14 @@ crc32:
         not.l d0
         rts
 
+        ifnd FILES
 ; The fixed first 32 bytes of a level disk's track 0.
 level_disk_header:
         dc.b 'LEMSAVE',0
         dc.w 2,64
         dc.l $00020001
         dc.w 512,11,160,LEVEL_SLOT_SIZE,LEVEL_SLOTS,2048,2,LEVEL_SLOTS*2
+        endif
 
 ; Text entries for the game's text routine: column, row, text, NUL; $FF ends
 ; a list. The game's font has no ':'.
@@ -2117,9 +2063,6 @@ txt_list_searching:     dc.b 'Reading the levels...',0
         else
 txt_list_searching:     dc.b 'Looking for the level disk...',0
         endif
-txt_list_index:         dc.b 'The index of the level disk is',$0a
-                        dc.b 'damaged. Repair it with savedisk.py',$0a
-                        dc.b 'rebuild-index.',0
 txt_list_no_two:        dc.b 'There are no levels for two players.',0
         ifd FILES
 txt_list_no_files:

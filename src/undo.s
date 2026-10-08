@@ -1,4 +1,4 @@
-; Lemmings In-Game Level Editor V2.3
+; Lemmings In-Game Level Editor V2.3.1
 ; Copyright (c) 2026 Timo Heimonen <timo.heimonen@proton.me>
 ; Licensed under the MIT License. See the LICENSE file for details.
 ;
@@ -407,15 +407,15 @@ terrain_rebuild:
         tst.w d0
         bpl .left
         moveq #0,d0
-.left:  cmp.w #203,d1
+.left:  cmp.w #TERRAIN_ROW-1,d1
         ble .right
-        move.w #203,d1
+        move.w #TERRAIN_ROW-1,d1
 .right: tst.w d2
         bpl .top
         moveq #0,d2
-.top:   cmp.w #167,d3
+.top:   cmp.w #TERRAIN_ROWS-1,d3
         ble .bottom
-        move.w #167,d3
+        move.w #TERRAIN_ROWS-1,d3
 .bottom:
         cmp.w d0,d1
         blt .restore
@@ -438,7 +438,7 @@ terrain_rebuild:
         move.w clip_rows(a4),d6
         subq.w #1,d6
 .row:   move.w d5,d4
-        mulu #204,d4
+        mulu #TERRAIN_ROW,d4
         lea 0(a1,d4.l),a0
         adda.w clip_lo(a4),a0
         move.w clip_span(a4),d4
@@ -526,11 +526,8 @@ piece_rect:
         and.w #$1fff,d4                 ; x
         move.w d0,d5
         asr.w #7,d5                     ; y, signed
-        and.w #$3f,d0
-        movea.l G_STYLE(a5),a0
-        lea $290(a0),a0
-        mulu #12,d0
-        adda.w d0,a0
+        move.w d0,d1
+        bsr piece_desc
         move.w d4,d0
         add.w (a0),d4
         subq.w #1,d4

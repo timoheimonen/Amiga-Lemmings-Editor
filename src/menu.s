@@ -1,4 +1,4 @@
-; Lemmings In-Game Level Editor V2.3
+; Lemmings In-Game Level Editor V2.3.1
 ; Copyright (c) 2026 Timo Heimonen <timo.heimonen@proton.me>
 ; Licensed under the MIT License. See the LICENSE file for details.
 ;
@@ -49,14 +49,11 @@ menu_begin:
         ifd FILES
         st native_drive(a4)             ; no floppy drives
         else
-        move.b 2(a5),d0                 ; CIA bit of the game's disk 2 drive
+        move.b G_DRIVE(a5),d0           ; CIA bit of the game's disk 2 drive
         subq.b #3,d0
         move.b d0,native_drive(a4)
         endif
-        btst #6,$bfe001
-        seq last_left(a4)
-        btst #2,$16(a6)
-        seq last_right(a4)
+        bsr latch_buttons
         ifd FADE_STEP
         movem.l d1-d3/d6-d7,-(sp)       ; the fade's registers but D0/A0/A1
 .fade:  tst.w G_FADE(a5)                ; the level's fade-in ends first, so
@@ -88,10 +85,7 @@ menu_close:
         dbra d0,.palette
         clr.b menu_mode(a4)
         st disk_redraw(a4)
-        btst #6,$bfe001
-        seq last_left(a4)
-        btst #2,$16(a6)
-        seq last_right(a4)
+        bsr latch_buttons
         movem.l (sp)+,d0/a0-a1
         rts
 
@@ -117,24 +111,14 @@ menu_frame:
         tst.b menu_mode(a4)
         beq.s .done
         bra.s .keys
-.mouse: btst #2,$16(a6)
-        seq d0
-        cmp.b last_right(a4),d0
-        beq.s .left
-        move.b d0,last_right(a4)
-        tst.b d0
-        beq.s .left
+.mouse: bsr right_edge
+        bpl.s .left
         moveq #KEY_ESC,d0               ; right button: back / cancel
         bsr menu_key
         tst.b menu_mode(a4)
         beq.s .done
-.left:  btst #6,$bfe001
-        seq d0
-        cmp.b last_left(a4),d0
-        beq.s .done
-        move.b d0,last_left(a4)
-        tst.b d0
-        beq.s .done
+.left:  bsr left_edge
+        bpl.s .done
         cmp.b #M_TITLE,menu_mode(a4)    ; a click continues a message or prompt
         beq.s .done
         cmp.b #M_LEAVE,menu_mode(a4)    ; but never discards the level
@@ -227,8 +211,13 @@ menu_is_return:
 
 ; A0: message text. Return closes the menu (asking for disk 2 if needed).
 menu_message:
+        moveq #M_MESSAGE,d1
+
+; A0: message text, D1: the menu's state it is shown in (M_MESSAGE,
+; M_PROMPT_DISK2, M_PROMPT_LEVEL or M_LEAVE).
+menu_prompt:
         move.l a0,menu_msg(a4)
-        move.b #M_MESSAGE,menu_mode(a4)
+        move.b d1,menu_mode(a4)
         bra menu_draw_message
 
 ; From the frame hook: the level has unsaved changes; ask before leaving it.
@@ -237,20 +226,18 @@ menu_ask_leave:
         moveq #2,d0
         bsr menu_begin
         lea txt_unsaved(pc),a0
-        move.l a0,menu_msg(a4)
-        move.b #M_LEAVE,menu_mode(a4)
-        bsr menu_draw_message
+        moveq #M_LEAVE,d1
+        bsr.s menu_prompt
         movem.l (sp)+,d0-d7/a0-a3
         rts
 
+        ifnd FILES
 menu_prompt_disk2:
         lea txt_insert_disk2(pc),a0
-        move.l a0,menu_msg(a4)
-        move.b #M_PROMPT_DISK2,menu_mode(a4)
-        bra menu_draw_message
+        moveq #M_PROMPT_DISK2,d1
+        bra.s menu_prompt
 
-        ifnd FILES
-; Check that disk 2 is back in its drive: its directory starts with Ground1.
+; Check that disk 2 is back in its drive.
 menu_disk2_done:
         bsr menu_show_working
         moveq #0,d0
@@ -258,16 +245,23 @@ menu_disk2_done:
         moveq #0,d1
         bsr disk_read_track
         tst.l d0
-        bne.s .again
+        bne.s menu_prompt_disk2
+        bsr.s is_disk2
+        bne.s menu_prompt_disk2
+        clr.b native_used(a4)
+        bra menu_close
+
+; Z set when DISK_TRACK holds track 0 of disk 2: its directory starts with
+; Ground1. Preserves every register.
+is_disk2:
+        move.l a0,-(sp)
         lea install(pc),a0
         adda.l #DISK_TRACK+$410,a0
         cmpi.l #'Grou',(a0)
-        bne.s .again
+        bne.s .done
         cmpi.l #'nd1'<<8,4(a0)
-        bne.s .again
-        clr.b native_used(a4)
-        bra menu_close
-.again: bra menu_prompt_disk2
+.done:  movea.l (sp)+,a0
+        rts
 
 ; D0: drive 0..3. Return D0 = 0 (Z set) when a drive is connected. DF0 is
 ; always present; DF1..DF3 report a 32-bit drive identification serially on
@@ -328,10 +322,10 @@ menu_clear:
         move.l G_VIEW_FRONT(a5),a0
         subq.l #2,a0
         moveq #3,d1
-.plane: move.w #160*44/4-1,d0
+.plane: move.w #VIEW_ROWS*VIEW_ROW/4-1,d0
 .clear: clr.l (a0)+
         dbra d0,.clear
-        adda.l #VIEW_PLANE-160*44,a0
+        adda.l #VIEW_PLANE-VIEW_ROWS*VIEW_ROW,a0
         dbra d1,.plane
         movem.l (sp)+,d0-d1/a0
         rts
@@ -360,18 +354,11 @@ menu_text:
 ; D0: character, D1: row, D2: column, D3: foreground, D4: background.
 menu_cell:
         movem.l d0-d6/a0-a2,-(sp)
-        cmp.w #32,d0
-        bls.s .blank
-        cmp.w #126,d0
-        bls.s .known
-.blank: moveq #32,d0
-.known: sub.w #32,d0
-        lsl.w #3,d0
-        lea font(pc),a2
-        adda.w d0,a2
+        bsr font_glyph
+        movea.l a0,a2
         move.l G_VIEW_FRONT(a5),a1
         subq.l #2,a1
-        mulu #8*44,d1
+        mulu #8*VIEW_ROW,d1
         adda.l d1,a1
         addq.w #2,d2                    ; visible bytes start at byte 2
         adda.w d2,a1
@@ -389,7 +376,7 @@ menu_cell:
         not.b d0
         or.b d0,d2
 .no_bg: move.b d2,(a3)
-        lea 44(a3),a3
+        lea VIEW_ROW(a3),a3
         dbra d5,.line
         adda.l #VIEW_PLANE,a1
         addq.w #1,d6
@@ -437,19 +424,21 @@ menu_draw_frame:
         movem.l (sp)+,d0-d4/a0-a1
         rts
 
-; Message or prompt in menu_msg, with the key help.
+; Message or prompt in menu_msg, with the key help of the menu's state.
 menu_draw_message:
-        movem.l d0-d4/a0,-(sp)
-        bsr menu_clear
-        bsr menu_draw_frame
-        moveq #7,d1
-        moveq #2,d2
-        moveq #PANEL_FG,d3
-        moveq #0,d4
+        movem.l d0-d4/a0-a1,-(sp)
         movea.l menu_msg(a4),a0
-        bsr menu_text
+        lea txt_help_continue(pc),a1
+        cmp.b #M_PROMPT_LEVEL,menu_mode(a4)
+        bne.s .leave
+        lea txt_help_prompt(pc),a1
+.leave: cmp.b #M_LEAVE,menu_mode(a4)
+        bne.s .draw
+        lea txt_help_leave(pc),a1
+.draw:  bsr.s menu_draw_text
+        ifnd FILES
         cmp.b #M_PROMPT_DISK2,menu_mode(a4)
-        bne.s .help
+        bne.s .done
         ; The disk 2 prompt names the drive.
         moveq #0,d1
         move.b native_drive(a4),d1
@@ -461,39 +450,38 @@ menu_draw_message:
         move.b #':',3(a0)
         clr.b 4(a0)
         moveq #13,d1
+        moveq #2,d2
+        moveq #PANEL_FG,d3
         bsr menu_text
-.help:  moveq #19,d1
-        moveq #0,d2
-        moveq #PANEL_HELP,d3
-        lea txt_help_continue(pc),a0
-        cmp.b #M_PROMPT_LEVEL,menu_mode(a4)
-        bne.s .leave
-        lea txt_help_prompt(pc),a0
-.leave: cmp.b #M_LEAVE,menu_mode(a4)
-        bne.s .draw
-        lea txt_help_leave(pc),a0
-.draw:  bsr menu_text
-        movem.l (sp)+,d0-d4/a0
+.done:
+        endif
+        movem.l (sp)+,d0-d4/a0-a1
         rts
 
 ; Shown before every disk operation; the drive may take a few seconds.
 menu_show_working:
-        movem.l d0-d4/a0,-(sp)
+        movem.l d0-d4/a0-a1,-(sp)
+        lea txt_working(pc),a0
+        lea txt_help_working(pc),a1
+        bsr.s menu_draw_text
+        movem.l (sp)+,d0-d4/a0-a1
+        rts
+
+; A0: text, A1: its key help. Draw the menu with them; D4 returns 0.
+; Clobbers D1-D3/A0.
+menu_draw_text:
         bsr menu_clear
         bsr menu_draw_frame
         moveq #7,d1
         moveq #2,d2
         moveq #PANEL_FG,d3
         moveq #0,d4
-        lea txt_working(pc),a0
         bsr menu_text
         moveq #19,d1
         moveq #0,d2
         moveq #PANEL_HELP,d3
-        lea txt_help_working(pc),a0
-        bsr menu_text
-        movem.l (sp)+,d0-d4/a0
-        rts
+        movea.l a1,a0
+        bra menu_text
 
 ; ---------------------------------------------------------------------------
 ; Colours for the menu: background, text, selection bar, (unused), help.
@@ -518,8 +506,10 @@ txt_leave_title:        dc.b 'LEAVE',0
 txt_unsaved:            dc.b 'This level has unsaved changes.',$0a
                         dc.b 'Leaving the editor discards them.',0
 txt_working:            dc.b 'Working with the disk...',0
+        ifnd FILES
 txt_insert_disk2:       dc.b 'Insert LEMMINGS DISK 2 into',$0a
                         dc.b 'the drive below and press Return.',0
+        endif
 txt_e_refused:          dc.b 'The operation was refused.',0
 txt_e_cancelled:        dc.b 'Cancelled.',0
 txt_e_no_disk:          dc.b 'There is no disk in the drive.',0

@@ -213,7 +213,7 @@ Lemmings. What differs:
 - The game is an AmigaDOS program: every file access gives the hardware back
   to the system for a moment, as the game's own loader does.
 
-Details: [Holiday Lemmings 1994](docs/holiday-lemmings-1994.md).
+Details: [Holiday Lemmings 1994 level editor: architecture](docs/architecture-holiday-lemmings-1994.md).
 
 ## Limitations
 
@@ -289,12 +289,15 @@ of `patch.py`, so end users need only Python.
 
 ## Docs
 
-Addresses, hooks and data formats are documented in [docs/](docs/):
-[patch points](docs/patch-points.md), [memory map](docs/memory-map.md),
-[game internals](docs/game-internals.md), [level disk](docs/level-disk.md),
-[level file format](docs/Lemmings-lvl-format.md) and
-[Holiday Lemmings 1994](docs/holiday-lemmings-1994.md).
-The WHDLoad version is documented in [whdload/docs/](whdload/docs/).
+- [Lemmings level editor: architecture](docs/architecture-lemmings.md):
+  how the editor is built into Lemmings, floppy and WHDLoad, with diagrams
+- [Holiday Lemmings 1994 level editor: architecture](docs/architecture-holiday-lemmings-1994.md):
+  the same for Holiday Lemmings 1994
+- [Level disk](docs/level-disk.md): the level disk of the floppy version
+- [Amiga Lemmings level file format](docs/Lemmings-lvl-format.md): the
+  `.lvl` file
+- [WHDLoad patch points](whdload/docs/patch-points.md) and
+  [WHDLoad memory map](whdload/docs/memory-map.md): the WHDLoad slaves
 
 ## Version 1.x
 

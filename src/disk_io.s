@@ -1,4 +1,4 @@
-; Lemmings In-Game Level Editor V2.3
+; Lemmings In-Game Level Editor V2.3.1
 ; Copyright (c) 2026 Timo Heimonen <timo.heimonen@proton.me>
 ; Licensed under the MIT License. See the LICENSE file for details.
 ;
@@ -19,7 +19,6 @@ DISK_CHANGED    equ -7
 DISK_DAMAGED    equ -8
 DISK_INDEX      equ -9
 DISK_INDEX_WRITE equ -10
-RAW_TITLE       equ $58800            ; the game's raw track buffer, idle on the title screen
 
         ifd FILES
         ifd WHDLOAD
@@ -133,7 +132,7 @@ disk_acquire:
         bhs .bad
         tst.b disk_busy(a4)
         bne .bad
-        move.l #RAW_TITLE,d1
+        move.l #RAW_TRACK,d1
         tst.b title_disk(a4)
         bne.s .idle
         tst.b active(a4)
@@ -143,11 +142,11 @@ disk_acquire:
         tst.b G_TWO_PLAYERS(a5)
         bne .bad
         move.l G_VIEW_BACK(a5),d1
-        move.l #$2bd42,d2
-        cmp.l #$23940,d1
+        move.l #VIEW_BUFFER_2+2,d2
+        cmp.l #VIEW_BUFFER_1,d1
         beq.s .front
-        move.l #$23942,d2
-        cmp.l #$2bd40,d1
+        move.l #VIEW_BUFFER_1+2,d2
+        cmp.l #VIEW_BUFFER_2,d1
         bne .bad
 .front: cmp.l G_VIEW_FRONT(a5),d2
         bne .bad
@@ -337,7 +336,8 @@ disk_delay:
 
 ; One cleanup path for success, cancellation and all hardware errors. Latch
 ; motor off by deselecting, raising /MTR, then selecting and deselecting again.
-; Native disk reads home when $83C2 is negative; the drive variable is intact.
+; Native disk reads home when DISK_CYLINDER is negative; the drive variable is
+; intact.
 disk_release:
         move.l d0,-(sp)
         move.w #$4000,$24(a6)
@@ -347,7 +347,7 @@ disk_release:
         move.b #$ff,$bfd100
         bclr d1,$bfd100
         bset d1,$bfd100
-        st $83c2
+        st DISK_CYLINDER
         move.w #$7f00,$9e(a6)
         move.w disk_old_adk(a4),d0
         and.w #$7f00,d0
@@ -368,10 +368,7 @@ disk_release:
         clr.b pending_flip(a4)
         clr.b disk_busy(a4)
         move.w (sp)+,sr
-        btst #6,$bfe001
-        seq last_left(a4)
-        btst #2,$16(a6)
-        seq last_right(a4)
+        bsr latch_buttons
         st disk_redraw(a4)
         move.l (sp)+,d0
         rts

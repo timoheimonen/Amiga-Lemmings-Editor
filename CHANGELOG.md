@@ -1,6 +1,25 @@
 # Changelog
 
-## V2.3
+## V2.3.1 (2026-10-08)
+
+- Faster drawing in the editor: the preview of the terrain brush and the
+  outlines of objects, steel areas and the piece to delete. In an emulated
+  A500 the preview of a 32 x 32 piece takes 0.58 fields instead of 1.10, the
+  outline of the largest object 0.06 fields instead of 0.51, and the
+  drawing of a level with 32 objects 0.52 fields instead of 0.93.
+- The editor's sources were reviewed for duplicated code: shared routines
+  replace the copies, and the builds with level files (WHDLoad, Holiday
+  Lemmings 1994) no longer carry level disk code they never run. The editor
+  is smaller in every build (Lemmings floppy: `Editor` 17584 packed bytes
+  instead of 17776).
+- No change to the keys, the levels, the level disk or the `.lvl` format.
+- Docs: [architecture](docs/architecture-lemmings.md) documents with
+  diagrams for Lemmings and
+  [Holiday Lemmings 1994](docs/architecture-holiday-lemmings-1994.md)
+  replace the patch points, the memory map, the game internals and the
+  Holiday Lemmings 1994 document.
+
+## V2.3 (2026-10-03)
 
 - Holiday Lemmings 1994: the editor in Holiday Lemmings 1994, on its floppy
   disk and as a WHDLoad install, from its disk image (identified by its
@@ -20,7 +39,7 @@
   `python3 patch.py "Holiday Lemmings 1994.adf"` writes the patched disk,
   with `--whdload DIR` the WHDLoad install.
 
-## V2.2
+## V2.2 (2026-10-02)
 
 - Deleting custom levels: `Del` in the 1 Player list asks before deleting
   the selected level, naming it by its number and title; only Return
@@ -39,7 +58,7 @@
   about three seconds); without it, when WHDLoad quits, and until then the
   list no longer shows it.
 
-## V2.1.1
+## V2.1.1 (2026-10-01)
 
 - Saving no longer writes over a level of another level disk: when the level
   disk in the drive holds a different level in the edited level's place, the
@@ -78,7 +97,7 @@
 - Negative coordinates are shown with a minus sign, and the preview shows at
   once when the editor reopens after a test play.
 
-## V2.1
+## V2.1 (2026-10-01)
 
 - Undo and redo in the editor: `U` undoes the last edit, Shift+`U` redoes
   it, three steps. Every kind of edit can be undone: terrain pieces, steel
@@ -98,7 +117,7 @@
   session.
 - After a save, snap also finds the pieces placed before the save.
 
-## V2.0
+## V2.0 (2026-09-30)
 
 Version 2 is a separate line: custom levels instead of editing the original
 ones. V1.x continues on the `v1-maint` branch.
@@ -140,14 +159,14 @@ ones. V1.x continues on the `v1-maint` branch.
 
 The entries below are the V1.x line.
 
-## V1.2.1
+## V1.2.1 (2026-09-29)
 
 - The WHDLoad slave accepts only the disk images written with it by
   `patch.py --whdload`. Disk images of the floppy version or of another
   version end with WHDLoad's "wrong version" requester instead of starting a
   game whose save menu would try to use the floppy drive.
 
-## V1.2
+## V1.2 (2026-09-29)
 
 - WHDLoad install: `patch.py --whdload DIR` writes a slave, the patched disk
   images and a Workbench icon. Runs from hard disk on Kickstart 2.0 or later
@@ -157,7 +176,7 @@ The entries below are the V1.x line.
 - The floppy version is unchanged apart from the version number; V1.1 save
   disks and saves work in both versions.
 
-## V1.1
+## V1.1 (2026-09-29)
 
 - Save and load: up to 32 named saves per level on a separate save disk,
   318 per disk. `S` and `L` in the editor open the menu for the current level.
@@ -170,6 +189,6 @@ The entries below are the V1.x line.
   PC or Mac.
 - The editor is loaded in two parts (`Editor` on disk 2, `Editor2` on disk 1).
 
-## V1.0
+## V1.0 (2026-09-29)
 
 - Initial release.

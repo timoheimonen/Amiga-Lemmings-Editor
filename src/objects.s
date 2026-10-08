@@ -1,4 +1,4 @@
-; Lemmings In-Game Level Editor V2.3
+; Lemmings In-Game Level Editor V2.3.1
 ; Copyright (c) 2026 Timo Heimonen <timo.heimonen@proton.me>
 ; Licensed under the MIT License. See the LICENSE file for details.
 ;
@@ -32,8 +32,6 @@
 ;
 ; A4 is the editor state, A5 the game globals and A6 the custom chip base.
 
-OBJECT_DESC     equ $70                 ; descriptors in the style's leveldata
-OBJECT_SIZE     equ $22
 MAX_ENTRANCES   equ 4
 
 ; D0: object type. Return its descriptor in A0.
@@ -44,31 +42,14 @@ object_desc:
         adda.w d0,a0
         rts
 
-; Return the number of object types of the level's style in D0 (the
-; descriptors up to the first empty one).
-object_count:
-        movem.l d1/a0,-(sp)
-        moveq #0,d0
-.type:  movem.l d0,-(sp)
-        bsr.s object_desc
-        movem.l (sp)+,d0
-        moveq #OBJECT_SIZE/2-1,d1
-.word:  tst.w (a0)+
-        dbne d1,.word
-        beq.s .done
-        addq.w #1,d0
-        cmp.w #16,d0
-        blo.s .type
-.done:  movem.l (sp)+,d1/a0
-        rts
-
 ; D0: left and right arrows (signed count). Choose the object type.
 object_cycle:
         tst.b d0
         beq.s .done
         ext.w d0
         move.w d0,d1
-        bsr.s object_count
+        movea.l G_STYLE(a5),a0
+        bsr style_objects
         add.w obj_type(a4),d1
 .low:   tst.w d1
         bpl.s .high
@@ -114,13 +95,8 @@ object_input:
         adda.w d7,a1
         move.w d0,(a1)
         move.w d1,2(a1)
-.right: btst #2,$16(a6)
-        seq d0
-        cmp.b last_right(a4),d0
-        beq.s .left
-        move.b d0,last_right(a4)
-        tst.b d0
-        beq.s .left
+.right: bsr right_edge
+        bpl.s .left
         tst.b obj_drag(a4)
         bne.s .left
         move.w obj_hover(a4),d0
@@ -132,14 +108,10 @@ object_input:
         clr.l 4(a1,d0.w)
         bsr level_apply
         move.w #-1,obj_hover(a4)        ; no longer under the cursor
-.left:  btst #6,$bfe001
-        seq d0
-        cmp.b last_left(a4),d0
+.left:  bsr left_edge
         beq.s .done
-        move.b d0,last_left(a4)
-        tst.b d0
-        beq.s .release
-        cmpi.w #160,(MOUSE_Y).l
+        bpl.s .release
+        cmpi.w #VIEW_ROWS,(MOUSE_Y).l
         bhs.s .done                     ; not over the panel
         move.w obj_hover(a4),d0
         bmi.s .place
@@ -178,7 +150,7 @@ object_animate:
         bne.s .done
         tst.w obj_hover(a4)
         bpl.s .done
-        cmpi.w #160,(MOUSE_Y).l
+        cmpi.w #VIEW_ROWS,(MOUSE_Y).l
         bhs.s .done
         move.w obj_type(a4),d0
         bsr object_desc
@@ -212,9 +184,9 @@ object_hover:
         movem.l d0-d7/a0-a1,-(sp)
         moveq #-1,d7
         move.w (MOUSE_X).l,d2
-        add.w #16,d2                    ; cursor in the back buffer
+        add.w #VIEW_LEFT,d2             ; cursor in the back buffer
         move.w (MOUSE_Y).l,d3
-        cmp.w #160,d3
+        cmp.w #VIEW_ROWS,d3
         bhs.s .found
         lea (OBJECTS+31*8).l,a1
         moveq #31,d6
@@ -265,42 +237,15 @@ object_place:
         dbra d1,.entrance
         cmp.w #MAX_ENTRANCES,d2
         bhs.s .done
-.slot:  ; The lowest free slot: of the first 16 for a trigger area,
-        ; otherwise from slot 16 on, then of the first 16.
-        lea custom_record+$20(pc),a1
-        moveq #0,d3
-        tst.w $18(a2)
-        bne.s .first
+.slot:  moveq #0,d3
+        tst.w $18(a2)                   ; a trigger area
+        bne.s .find
         moveq #16,d3
-.free:  move.w d3,d0
-        lsl.w #3,d0
-        tst.w 0(a1,d0.w)
-        beq.s .found
-        addq.w #1,d3
-        cmp.w #32,d3
-        blo.s .free
-        moveq #0,d3
-.first: move.w d3,d0
-        lsl.w #3,d0
-        tst.w 0(a1,d0.w)
-        beq.s .found
-        addq.w #1,d3
-        cmp.w #16,d3
-        blo.s .first
-        bra.s .done
-.found: move.w 6(a2),d0
-        lsr.w #1,d0
-        neg.w d0
-        add.w brush_x(a4),d0
-        move.w 8(a2),d1
-        lsr.w #1,d1
-        neg.w d1
-        add.w brush_y(a4),d1
-        subq.w #4,d1
-        move.w obj_type(a4),d2
+.find:  bsr object_free_slot
+        bmi.s .done
+        lea custom_record+$20(pc),a1
         move.w d3,-(sp)
-        moveq #-1,d3
-        bsr object_snap
+        bsr object_cursor               ; A0 is still the descriptor
         move.w (sp)+,d3
         bsr object_fits
         bne.s .done
@@ -350,23 +295,11 @@ object_marker:
         addq.w #1,d3
         cmp.w #32,d3
         blo.s .marker
-        moveq #16,d3
-.free:  move.w d3,d4
+        moveq #16,d3                    ; a new one has no trigger area
+        bsr object_free_slot
+        bmi.s .done
+        move.w d3,d4
         lsl.w #3,d4
-        tst.w 0(a1,d4.w)
-        beq.s .put
-        addq.w #1,d3
-        cmp.w #32,d3
-        blo.s .free
-        moveq #0,d3
-.first: move.w d3,d4
-        lsl.w #3,d4
-        tst.w 0(a1,d4.w)
-        beq.s .put
-        addq.w #1,d3
-        cmp.w #16,d3
-        blo.s .first
-        bra.s .done
 .put:   moveq #2,d2
         bsr object_fits
         bne.s .done
@@ -380,6 +313,36 @@ object_marker:
         move.w d1,(a0)
         bsr level_apply
 .done:  movem.l (sp)+,d0-d4/a0-a2
+        rts
+
+; D3: 0 for an object with a trigger area (an exit, a trap), 16 for any
+; other. D3 returns the lowest free slot of custom_record for it: of the
+; first 16 for a trigger area, the only ones the game gives trigger cells,
+; otherwise from slot 16 on, then of the first 16; or -1 (N set) when there
+; is none. Preserves every other register.
+object_free_slot:
+        movem.l d0/a1,-(sp)
+        lea custom_record+$20(pc),a1
+        tst.w d3
+        beq.s .first
+.free:  move.w d3,d0
+        lsl.w #3,d0
+        tst.w 0(a1,d0.w)
+        beq.s .done
+        addq.w #1,d3
+        cmp.w #32,d3
+        blo.s .free
+        moveq #0,d3
+.first: move.w d3,d0
+        lsl.w #3,d0
+        tst.w 0(a1,d0.w)
+        beq.s .done
+        addq.w #1,d3
+        cmp.w #16,d3
+        blo.s .first
+        moveq #-1,d3
+.done:  movem.l (sp)+,d0/a1
+        tst.w d3
         rts
 
 ; Take the objects for undo before an edit of them. Preserves every register.
@@ -411,6 +374,22 @@ object_drop:
         move.w d0,0(a1,d4.w)
         move.w d1,2(a1,d4.w)
 .back:  bra level_apply
+
+; A0: the descriptor of the selected type. D0/D1 return the top left corner
+; where a new object of it goes: centred on the cursor, or beside a
+; neighbour with snap on. D2 returns the type, D3 -1.
+object_cursor:
+        move.w 6(a0),d0
+        lsr.w #1,d0
+        neg.w d0
+        add.w brush_x(a4),d0
+        move.w 8(a0),d1
+        lsr.w #1,d1
+        neg.w d1
+        add.w brush_y(a4),d1
+        subq.w #4,d1
+        move.w obj_type(a4),d2
+        moveq #-1,d3
 
 ; D0/D1: position (top left corner) of an object of type D2, D3: its slot or
 ; -1. With snap on, return the position beside the nearest other object of the
@@ -499,7 +478,7 @@ object_fits:
         ble.s .bad
         tst.w d1
         bmi.s .bad
-        cmp.w #160,d1
+        cmp.w #VIEW_ROWS,d1
         bge.s .bad
         cmp.w #16,d3
         bhs.s .good
@@ -510,7 +489,7 @@ object_fits:
         lsr.w #2,d0
         add.w $10(a0),d0
         add.w $14(a0),d0
-        cmp.w #408,d0
+        cmp.w #GRID_WIDTH,d0
         bhi.s .bad
         lsr.w #2,d1
         add.w $12(a0),d1
@@ -531,22 +510,11 @@ object_draw:
         bne .outline
         tst.w obj_hover(a4)
         bpl .outline
-        cmpi.w #160,(MOUSE_Y).l
+        cmpi.w #VIEW_ROWS,(MOUSE_Y).l
         bhs .outline
         move.w obj_type(a4),d0
         bsr object_desc
-        move.w brush_x(a4),d0           ; where object_place puts it
-        move.w 6(a0),d6
-        lsr.w #1,d6
-        sub.w d6,d0
-        move.w brush_y(a4),d1
-        subq.w #4,d1
-        move.w 8(a0),d6
-        lsr.w #1,d6
-        sub.w d6,d1
-        move.w obj_type(a4),d2
-        moveq #-1,d3
-        bsr object_snap
+        bsr object_cursor               ; where object_place puts it
         sub.w (VIEW_SCROLL).l,d0              ; into the back buffer
         move.w 6(a0),d2
         move.w 8(a0),d3
@@ -562,7 +530,7 @@ object_draw:
         movea.l G_VIEW_BACK(a5),a0
         ifd BLIT_HEIGHT
         move.w (BLIT_HEIGHT).l,-(sp)
-        move.w #160,(BLIT_HEIGHT).l     ; nothing below the view's rows
+        move.w #VIEW_ROWS,(BLIT_HEIGHT).l ; nothing below the view's rows
         jsr BLIT
         move.w (sp)+,(BLIT_HEIGHT).l
         else
@@ -600,7 +568,7 @@ object_status:
         bsr status_number
         ifd TWO_PLAYER
         moveq #1,d1                     ; valid for two players
-        movem.l d2,-(sp)
+        move.l d2,-(sp)
         add.w #12,d2
         bsr status_cell
         lea custom_record(pc),a0
@@ -609,20 +577,20 @@ object_status:
         bne.s .players
         lea txt_yes(pc),a2
 .players:
-        bsr.s .text
-        movem.l (sp)+,d2
+        bsr glyph_text
+        move.l (sp)+,d2
         endif
         moveq #2,d1
         move.w obj_hover(a4),d0
         bmi.s .none
         bsr status_number
         bra.s .used
-.none:  movem.l d2,-(sp)
+.none:  move.l d2,-(sp)
         add.w #12,d2
         bsr status_cell
         lea txt_none(pc),a2
-        bsr.s .text
-        movem.l (sp)+,d2
+        bsr glyph_text
+        move.l (sp)+,d2
 .used:  lea custom_record+$20(pc),a1
         moveq #31,d1
         moveq #0,d0
@@ -638,20 +606,14 @@ object_status:
         move.w obj_flags(a4),d0
         rol.w #2,d0
         and.w #3,d0
-        mulu #9,d0
+        lsl.w #3,d0
         lea txt_draw_modes(pc),a2
         adda.w d0,a2
-.text:  moveq #0,d0
-        move.b (a2)+,d0
-        beq.s .done
-        bsr glyph
-        addq.w #8,d4
-        bra.s .text
-.done:  rts
+        bra glyph_text
 
 txt_none:       dc.b 'None',0
 txt_yes:        dc.b 'Yes ',0
 txt_no:         dc.b 'No  ',0
 ; Drawing modes by flag bits 15..14: $000F, $400F, $800F, $C00F.
-txt_draw_modes: dc.b 'Normal ',0,0,'Terrain',0,0,'Behind ',0,0,'Both   ',0,0
+txt_draw_modes: dc.b 'Normal ',0,'Terrain',0,'Behind ',0,'Both   ',0
         even
