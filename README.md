@@ -240,6 +240,7 @@ Details: [Holiday Lemmings 1994 level editor: architecture](docs/architecture-ho
 ```sh
 python3 build.py
 ```
+Requires: [vasm](http://sun.hasenbraten.de/vasm/) `vasmm68k_mot`.
 
 Assembles `src/editor.s` (which includes the other sources) and
 `src/bootstrap.s`, twice: for floppy and with `WHDLOAD` defined for the
