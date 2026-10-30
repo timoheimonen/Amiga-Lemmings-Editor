@@ -34,7 +34,6 @@ More photos from an A500: [two players in a custom level](docs/images/lemmings_2
   drives; a second mouse (joystick port 2) for two players. Holiday
   Lemmings 1994: 512K chip + 512K other memory
 - Python 3.8+ (for `patch.py` and `savedisk.py`)
-- [vasm](http://sun.hasenbraten.de/vasm/) `vasmm68k_mot` (only for `build.py`)
 - Your own copies of these disk images:
 
 | Image | SHA-256 |
